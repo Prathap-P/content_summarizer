@@ -1,85 +1,40 @@
 import json
 
 from flask import Flask, render_template, request, jsonify, send_file, stream_with_context, Response
-from dotenv import load_dotenv
 import os
-import re
-import time
 
-from jupyter_client.session import session_aliases
 from langchain.chains.conversation.base import ConversationChain
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableWithMessageHistory
+import requests
+import time
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from main import read_website_content
 from youtube_transcript_fetcher import get_youtube_transcript
-from system_prompts import news_explainer_system_message, youtube_transcript_shortener_system_message
-from langchain_groq import ChatGroq
-from langchain_openai import ChatOpenAI
+from system_prompts import news_explainer_system_message, subject_matter_expert_prompt
+from condenser_service import condense_content
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
 from kokoro_tts import generate_audio, create_audio_file
-import requests
+from llm_models import get_model
+from utils import remove_thinking_tokens
+from email_sender import send_email_with_audio
 
-load_dotenv()
 
 app = Flask(__name__)
-
-# Initialize LLM
-groq_llm = ChatGroq(
-    model="openai/gpt-oss-20b",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.3,
-    max_completion_tokens=65000,
-)
-
-gemma_local_llm = ChatOpenAI(
-    base_url="http://localhost:1234/v1",
-    api_key="test",
-    temperature=0.7,
-    model="google/gemma-3-27b"
-)
-
-nemotron_local_llm = ChatOpenAI(
-    base_url="http://localhost:1234/v1",
-    api_key="test",
-    temperature=0.3,
-    model="nvidia/nemotron-3-nano",
-    top_p= 0.85,
-    max_completion_tokens= -1,
-    model_kwargs= {
-        "frequency_penalty": 1.3, # Heavily discourages "The speaker says..." loops
-        "presence_penalty": 0.3,  # Encourages introducing new topics/facts
-    },
-    streaming=True,
-    stream_usage=True
-)
-
-deepseekR1_local_llm = ChatOpenAI(
-    base_url="http://localhost:1234/v1",
-    api_key="test",
-    temperature=0.7,
-    model="deepseek/deepseek-r1-0528-qwen3-8b"
-)
-
-gpt_oss_20b_local_llm = ChatOpenAI(
-    base_url="http://localhost:1234/v1",
-    api_key="lm-studio",
-    model="openai/gpt-oss-20b",
-    extra_body={"reasoning_effort": "high"},
-    max_completion_tokens=12800,
-    temperature=0.5,
-    # streaming=True,
-)
 
 # Global conversation state (in production, use session-based storage)
 window_memory_100 = ConversationBufferWindowMemory(k=100)
 conversation_chain = None
 current_mode = None
 session_history = InMemoryChatMessageHistory()
+current_model = get_model("nemotron_stream_local_llm")
 
 def check_llm_server():
     """Check if the local LLM server is running"""
@@ -89,92 +44,18 @@ def check_llm_server():
     except:
         return False
 
-
-def remove_thinking_tokens(text: str) -> str:
-    """
-    Remove thinking tokens and reasoning artifacts from LLM response.
-
-    Handles multiple formats:
-    - <think>...</think>
-    - <|thinking|>...</|thinking|>
-    - [thinking]...[/thinking]
-    - **Thinking:** ...
-    - thinking: ...
-
-    Args:
-        text: Raw LLM response text
-
-    Returns:
-        Cleaned text with thinking tokens removed
-    """
-    if not text:
-        return text
-
-    original_length = len(text)
-    cleaned = text
-
-    # Define patterns to remove (order matters - most specific first)
-    patterns = [
-        # Paired tags with content
-        (r'<\|thinking\|>.*?<\/\|thinking\|>', 'pipe-delimited thinking tags'),
-        (r'<think>.*?<\/think>', 'angle bracket thinking tags'),
-        (r'\[thinking\].*?\[\/thinking\]', 'square bracket thinking tags'),
-
-        # Markdown-style thinking headers with content until next section
-        (r'\*\*[Tt]hinking:?\*\*.*?(?=\n\n|\*\*[A-Z]|$)', 'markdown thinking headers'),
-
-        # Plain text thinking patterns
-        (r'(?:^|\n)[Tt]hinking:.*?(?=\n\n|$)', 'plain thinking headers'),
-
-        # Orphaned/malformed tags
-        (r'<\/think>', 'orphaned closing think tag'),
-        (r'<think>', 'orphaned opening think tag'),
-        (r'<\/\|thinking\|>', 'orphaned closing pipe tag'),
-        (r'<\|thinking\|>', 'orphaned opening pipe tag'),
-        (r'\[\/thinking\]', 'orphaned closing bracket tag'),
-        (r'\[thinking\]', 'orphaned opening bracket tag'),
-    ]
-
-    # Apply each pattern
-    for pattern, description in patterns:
-        before_len = len(cleaned)
-        cleaned = re.sub(pattern, '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-        removed = before_len - len(cleaned)
-        if removed > 0:
-            print(f"[DEBUG] Removed {removed} chars via {description}")
-
-    # Normalize whitespace
-    # Remove multiple consecutive newlines (keep max 2)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-
-    # Remove leading/trailing whitespace
-    cleaned = cleaned.strip()
-
-    # Remove spaces before punctuation
-    cleaned = re.sub(r'\s+([,.!?;:])', r'\1', cleaned)
-
-    # Log summary
-    total_removed = original_length - len(cleaned)
-    if total_removed > 0:
-        print(f"[CLEANUP] Removed {total_removed} total characters ({(total_removed / original_length) * 100:.1f}%)")
-    else:
-        print("[CLEANUP] No thinking tokens found")
-
-    return cleaned
-
 def create_conversation_chain(mode):
     """Create a conversation chain with mode-specific system prompt"""
     if mode == "news":
         system_message = news_explainer_system_message
     elif mode == "youtube":
-        system_message = youtube_transcript_shortener_system_message
+        system_message = subject_matter_expert_prompt
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
     prompt_template = PromptTemplate(
         input_variables=["history", "input"],
         template=f"""
-        System:
         {system_message}
         Conversation History:
         {{history}}
@@ -184,7 +65,7 @@ def create_conversation_chain(mode):
     )
 
     return ConversationChain(
-        llm=nemotron_local_llm,
+        llm=current_model,
         memory=window_memory_100,
         prompt=prompt_template,
         verbose=False
@@ -192,10 +73,11 @@ def create_conversation_chain(mode):
 
 def create_runnable_chain(mode):
     """Create a runnable chain with mode-specific system prompt"""
+    print(f"[INFO] Creating runnable chain for mode: {mode}")
     if mode == "news":
         system_message = news_explainer_system_message
     elif mode == "youtube":
-        system_message = youtube_transcript_shortener_system_message
+        system_message = subject_matter_expert_prompt
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
@@ -205,7 +87,7 @@ def create_runnable_chain(mode):
         ("human", "{input}")
     ])
 
-    base_chain = chat_prompt_template | nemotron_local_llm | StrOutputParser()
+    base_chain = chat_prompt_template | current_model | StrOutputParser()
 
     return RunnableWithMessageHistory(
         runnable=base_chain,  # 'runnable' is the required keyword
@@ -222,8 +104,8 @@ def index():
 
 @app.route('/load_content', methods=['POST'])
 def load_content():
-    """Load content (news article or YouTube transcript) and return raw content"""
-    global conversation_chain, current_mode
+    """Load content, condense it using condenser_service, and prepare for Q&A"""
+    global conversation_chain, current_mode, current_model
 
     data = request.json
     url = data.get('url')
@@ -239,52 +121,131 @@ def load_content():
         # Initialize conversation chain for the selected mode
         conversation_chain = create_runnable_chain(mode)
         current_mode = mode
-        global content
 
+        # Step 1: Fetch raw content
         if mode == 'news':
-            # Load news article content
             print(f"[INFO] Loading news article from: {url}")
             documents = read_website_content(url)
             if not documents:
                 print(f"[ERROR] Failed to load article from: {url}")
                 return jsonify({'error': 'Could not load article from URL'}), 400
 
-            content = documents[0].page_content
-            print(f"[SUCCESS] Article loaded successfully. Length: {len(content)} characters")
+            raw_content = documents[0].page_content
+            print(f"[SUCCESS] Article loaded successfully. Length: {len(raw_content)} characters")
 
         elif mode == 'youtube':
-            # Get YouTube transcript
             print(f"[INFO] Fetching YouTube transcript from: {url}")
-            content = get_youtube_transcript(url)
+            raw_content = get_youtube_transcript(url)
 
             # Check if transcript fetch failed
-            if content.startswith("No transcript available") or content.startswith("Error fetching") or content.startswith("Invalid YouTube"):
-                print(f"[ERROR] YouTube transcript fetch failed: {content}")
+            if raw_content.startswith("No transcript available") or raw_content.startswith("Error fetching") or raw_content.startswith("Invalid YouTube"):
+                print(f"[ERROR] YouTube transcript fetch failed: {raw_content}")
                 return jsonify({
-                    'error': content,
+                    'error': raw_content,
                     'success': False
                 }), 400
             
-            print(f"[SUCCESS] YouTube transcript fetched successfully. Length: {len(content)} characters")
+            print(f"[SUCCESS] YouTube transcript fetched successfully. Length: {len(raw_content)} characters")
 
-        # Calculate word count
-        word_count = len(content.split())
+        # Step 2: Condense content using condenser_service (no model conversation yet)
+        print(f"[INFO] Condensing content using condenser service...")
+        condensed_content = condense_content(raw_content, current_model)
+        print(f"[SUCCESS] Content condensed. Original: {len(raw_content)} chars -> Condensed: {len(condensed_content)} chars")
+
+        # Calculate word counts
+        raw_word_count = len(raw_content.split())
+        condensed_word_count = len(condensed_content.split())
         
-        # Store the content in conversation memory for context
-        session_history.add_user_message(f"Here is the {'article' if mode == 'news' else 'video transcript'} content (Total: {word_count} words):\n\n{content}")
-        session_history.add_ai_message(f"I have received and analyzed the content. I'm ready to answer your questions about it.")
-        print(f"[INFO] Word count: {word_count}")
+        # Step 3: Generate audio for condensed content
+        audio_file = None
+        audio_time = None
+        print(f"[INFO] Generating audio for condensed content ({len(condensed_content)} chars)...")
+        audio_start_time = time.time()
+        
+        try:
+            audio = generate_audio(condensed_content)
+            audio_file_path = create_audio_file(audio)
+            audio_file = os.path.basename(audio_file_path)
+            
+            audio_time = time.time() - audio_start_time
+            print(f"[SUCCESS] Audio generated: {audio_file}")
+            print(f"[TIME] Audio generation took: {audio_time:.2f}s")
+        except Exception as e:
+            print(f"[ERROR] Audio generation failed: {e}")
+        
+        # Step 4: Store condensed content in conversation memory for future Q&A
+        # The memory now contains: system prompt (from create_runnable_chain) + condensed input
+        session_history.add_user_message(f"Here is the condensed {'article' if mode == 'news' else 'video transcript'} content (Original: {raw_word_count} words, Condensed: {condensed_word_count} words):\n\n{condensed_content}")
+        session_history.add_ai_message(f"I have received and processed the condensed content. I'm ready to answer your questions about it.")
+        print(f"[INFO] Condensed content added to memory. Ready for Q&A.")
 
-        # Return the raw content to display to user
+        # Return the condensed content to display to user
         return jsonify({
-            'content': content,
+            'content': condensed_content,
             'mode': mode,
-            'word_count': word_count,
+            'word_count': condensed_word_count,
+            'original_word_count': raw_word_count,
+            'audio_file': audio_file,
+            'audio_time': round(audio_time, 2) if audio_time else None,
             'success': True
         })
 
     except Exception as e:
+        print(f"[ERROR] load_content failed: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/send_email', methods=['POST'])
+def send_email():
+    """Send condensed content with audio via email"""
+    data = request.json
+    audio_file = data.get('audio_file')
+    content = data.get('content')
+    mode = data.get('mode', 'news')
+    
+    # Get recipient email from environment variable
+    recipient_email = os.getenv('RECIPIENT_GMAIL_ADDRESS')
+    
+    if not recipient_email:
+        print("[ERROR] RECIPIENT_GMAIL_ADDRESS environment variable not set")
+        return jsonify({'error': 'Recipient email not configured. Set RECIPIENT_GMAIL_ADDRESS environment variable.', 'success': False}), 500
+    
+    if not audio_file:
+        return jsonify({'error': 'Audio file not found', 'success': False}), 400
+    
+    try:
+        # Build audio file path
+        audio_file_path = os.path.join('kokoro_outputs', audio_file)
+        
+        if not os.path.exists(audio_file_path):
+            return jsonify({'error': 'Audio file does not exist', 'success': False}), 404
+        
+        # Create email subject and body
+        content_type = 'Article' if mode == 'news' else 'Video Transcript'
+        subject = f'Condensed {content_type} with Audio'
+        
+        # Truncate content if too long for email body
+        body_content = content[:2000] + '...' if len(content) > 2000 else content
+        body_text = f"Here is the condensed {content_type.lower()}:\n\n{body_content}\n\nPlease find the audio file attached."
+        
+        print(f"[INFO] Sending email to {recipient_email}...")
+        success = send_email_with_audio(
+            recipient_email=recipient_email,
+            subject=subject,
+            body_text=body_text,
+            audio_file_path=audio_file_path
+        )
+        
+        if success:
+            print(f"[SUCCESS] Email sent to {recipient_email}")
+            return jsonify({'success': True, 'message': 'Email sent successfully'})
+        else:
+            print(f"[ERROR] Failed to send email to {recipient_email}")
+            return jsonify({'error': 'Failed to send email. Check server logs for details.', 'success': False}), 500
+            
+    except Exception as e:
+        print(f"[ERROR] send_email endpoint failed: {e}")
+        return jsonify({'error': str(e), 'success': False}), 500
 
 
 @app.route('/chat', methods=['POST'])
@@ -373,8 +334,10 @@ def chat():
 @app.route('/streamChat', methods=['POST'])
 def stream_chat():
     """Handle follow-up questions with streaming"""
+    print("[INFO] streamChat endpoint called")
     # Check if LLM server is accessible first
     if not check_llm_server():
+        print("[ERROR] LLM server not accessible")
         return jsonify({
             'error': 'Local LLM server is not running. Please start LM Studio and load a model at http://localhost:1234'
         }), 503
@@ -382,12 +345,14 @@ def stream_chat():
     data = request.json
     user_input = data.get('message')
     generate_audio_flag = data.get('generate_audio', False)
+    print(f"[INFO] User input: '{user_input[:50]}...' | Audio: {generate_audio_flag}")
 
     if not user_input:
         return jsonify({'error': 'Message is required'}), 400
 
     def stream_response():
         try:
+            print("[DEBUG] stream_response: Starting generator")
             # Track token usage with callback and time
             import time
             
@@ -427,9 +392,11 @@ def stream_chat():
                 }
 
             llm_time = time.time() - llm_start_time
+            print(f"[INFO] Streaming complete. Time: {llm_time:.2f}s, Chunks: {total_chunk_size} chars")
 
             # Remove thinking tokens from complete response
             complete_response_text = remove_thinking_tokens(complete_response_text)
+            print(f"[DEBUG] After thinking token removal: {len(complete_response_text)} chars")
 
             # print(f"[SUCCESS] LLM streaming response completed. Length: {total_chunk_size} characters")
             # print(f"[TOKENS] Prompt: {token_usage['prompt_tokens']}, Completion: {token_usage['completion_tokens']}, Total: {token_usage['total_tokens']}")
@@ -483,25 +450,31 @@ def stream_chat():
 @app.route('/audio/<filename>', methods=['GET'])
 def get_audio(filename):
     """Serve a specific audio file"""
+    print(f"[INFO] Audio file requested: {filename}")
     audio_dir = 'kokoro_outputs'
     file_path = os.path.join(audio_dir, filename)
 
     if os.path.exists(file_path):
+        print(f"[DEBUG] Serving audio file: {file_path}")
         return send_file(file_path, mimetype='audio/wav')
 
+    print(f"[ERROR] Audio file not found: {file_path}")
     return jsonify({'error': 'Audio file not found'}), 404
 
 
 @app.route('/clear_conversation', methods=['POST'])
 def clear_conversation():
     """Clear conversation memory and reset mode"""
+    print("[INFO] Clearing conversation memory")
     global conversation_chain, current_mode
     
     if session_history:
         session_history.clear()
+        print("[DEBUG] Session history cleared")
     
     conversation_chain = None
     current_mode = None
+    print("[INFO] Conversation state reset")
 
     return jsonify({'success': True, 'message': 'Conversation cleared'})
 

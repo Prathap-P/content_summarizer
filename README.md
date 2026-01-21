@@ -51,6 +51,25 @@ pip install -r requirements.txt
 GROQ_API_KEY=your_key_here
 ```
 
+## Email Configuration
+
+To enable email sending functionality:
+
+1. **Generate Gmail App Password:**
+   - Visit https://myaccount.google.com/apppasswords
+   - Create an app password for "Mail"
+   - Copy the 16-character password
+
+2. **Set Environment Variables:**
+   ```bash
+   export GMAIL_ADDRESS='your-email@gmail.com'
+   export GMAIL_APP_PASSWORD='your-16-char-app-password'
+   export RECIPIENT_GMAIL_ADDRESS='recipient-email@gmail.com'
+   ```
+
+3. **Add to Shell Profile (Optional):**
+   Add the above exports to your `~/.zshrc` or `~/.bashrc` to make them permanent.
+
 ## Usage
 
 ### Command-Line Interface

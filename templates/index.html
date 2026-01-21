@@ -283,10 +283,10 @@
 </head>
 <body>
     <div class="container">
-        <div class="header">
+        <!-- <div class="header">
             <h1>📰 Content Analyzer with TTS</h1>
             <p>Analyze news articles or YouTube videos with AI</p>
-        </div>
+        </div> -->
         
         <!-- Mode Selector -->
         <div class="mode-selector">
@@ -510,7 +510,7 @@
             loadBtn.disabled = true;
             loadBtn.innerHTML = '<span class="loading"></span>';
             
-            const loadingMessage = currentMode === 'news' ? 'Loading article...' : 'Loading transcript...';
+            const loadingMessage = currentMode === 'news' ? 'Loading and condensing article...' : 'Loading and condensing transcript...';
             showStatus(loadingMessage, 'info');
             
             try {
@@ -528,22 +528,37 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Display the raw content as assistant message
+                    // Display the condensed content as assistant message with audio
                     const contentType = currentMode === 'news' ? 'Article' : 'Transcript';
-                    addMessage(`${contentType} Content:\n\n${data.content}`, false);
                     
-                    // Display word count
+                    // Create timing info if available
+                    const timings = data.audio_time ? {
+                        llm_time: 0,  // No LLM time in load_content
+                        audio_time: data.audio_time
+                    } : null;
+                    
+                    addMessage(`${contentType} Content (Condensed):\n\n${data.content}`, false, data.audio_file, null, timings);
+                    
+                    // Display word count with original vs condensed stats
                     if (data.word_count) {
                         const wordCountDiv = document.createElement('div');
                         wordCountDiv.style.cssText = 'margin: 10px 0; padding: 10px; background: #e8f4f8; border-left: 3px solid #667eea; font-size: 14px; color: #555; border-radius: 4px; text-align: center;';
-                        wordCountDiv.innerHTML = `📝 Content loaded: <strong>${data.word_count.toLocaleString()}</strong> words`;
+                        
+                        const compressionRatio = ((1 - data.word_count / data.original_word_count) * 100).toFixed(1);
+                        wordCountDiv.innerHTML = `📝 Content condensed: <strong>${data.original_word_count.toLocaleString()}</strong> words → <strong>${data.word_count.toLocaleString()}</strong> words <span style="color: #4caf50;">(${compressionRatio}% reduction)</span>`;
                         document.getElementById('chatContainer').appendChild(wordCountDiv);
                     }
                     
-                    // Show analyze button
-                    showAnalyzeButton();
+                    // Enable chat input immediately
+                    document.getElementById('chatInput').disabled = false;
+                    document.getElementById('sendBtn').disabled = false;
                     
-                    const successMessage = currentMode === 'news' ? 'Article loaded! Click the button to analyze.' : 'Transcript loaded! Click the button to summarize.';
+                    // Show send email button if audio was generated
+                    if (data.audio_file) {
+                        showEmailButton(data.audio_file, data.content);
+                    }
+                    
+                    const successMessage = currentMode === 'news' ? 'Article condensed! Ready for Q&A.' : 'Transcript condensed! Ready for Q&A.';
                     showStatus(successMessage, 'success');
                 } else {
                     showStatus(data.error || 'Failed to load content', 'error');
@@ -557,32 +572,73 @@
             }
         }
         
-        function showAnalyzeButton() {
+        function showEmailButton(audioFile, content) {
             const chatContainer = document.getElementById('chatContainer');
             const buttonContainer = document.createElement('div');
-            buttonContainer.id = 'analyze-button-container';
-            buttonContainer.style.cssText = 'text-align: center; padding: 20px; margin: 10px 0;';
+            buttonContainer.id = 'email-button-container';
+            buttonContainer.style.cssText = 'text-align: center; padding: 15px; margin: 10px 0;';
             
-            const analyzeBtn = document.createElement('button');
-            analyzeBtn.textContent = currentMode === 'news' ? '📰 Analyze Article' : '🎬 Summarize Transcript';
-            analyzeBtn.className = 'btn btn-primary';
-            analyzeBtn.style.cssText = 'padding: 12px 30px; font-size: 16px; cursor: pointer;';
-            analyzeBtn.onclick = analyzeContent;
+            const emailBtn = document.createElement('button');
+            emailBtn.textContent = '📧 Send to Email';
+            emailBtn.className = 'btn btn-primary';
+            emailBtn.style.cssText = 'padding: 12px 30px; font-size: 16px; cursor: pointer; background: #4caf50;';
+            emailBtn.onmouseover = () => emailBtn.style.background = '#45a049';
+            emailBtn.onmouseout = () => emailBtn.style.background = '#4caf50';
+            emailBtn.onclick = () => sendEmail(audioFile, content);
             
-            buttonContainer.appendChild(analyzeBtn);
+            buttonContainer.appendChild(emailBtn);
             chatContainer.appendChild(buttonContainer);
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        async function analyzeContent() {
-            const buttonContainer = document.getElementById('analyze-button-container');
-            const analyzeBtn = buttonContainer?.querySelector('button');
+        async function sendEmail(audioFile, content) {
+            const buttonContainer = document.getElementById('email-button-container');
+            const emailBtn = buttonContainer?.querySelector('button');
             
-            if (analyzeBtn) {
-                analyzeBtn.disabled = true;
-                analyzeBtn.innerHTML = '<span class="loading"></span> Analyzing...';
+            if (emailBtn) {
+                emailBtn.disabled = true;
+                emailBtn.innerHTML = '<span class="loading"></span> Sending...';
             }
 
+            showStatus('Sending email...', 'info');
+            
+            try {
+                const response = await fetch('/send_email', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        audio_file: audioFile,
+                        content: content,
+                        mode: currentMode
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('Email sent successfully!', 'success');
+                    if (buttonContainer) {
+                        buttonContainer.remove();
+                    }
+                } else {
+                    showStatus(data.error || 'Failed to send email', 'error');
+                    if (emailBtn) {
+                        emailBtn.disabled = false;
+                        emailBtn.textContent = '📧 Send to Email';
+                    }
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+                if (emailBtn) {
+                    emailBtn.disabled = false;
+                    emailBtn.textContent = '📧 Send to Email';
+                }
+            }
+        }
+        
+        async function analyzeContent() {
             isLoading = true;
             showStatus(currentMode === 'news' ? 'Analyzing article...' : 'Summarizing transcript...', 'info');
             
@@ -659,7 +715,7 @@
                                     chunkCount++;
                                     accumulatedText += data.chunk;
                                     contentDiv.textContent = accumulatedText;
-                                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                                    // Don't force scroll - let user explore previous messages
                                 } 
                                 // Handle streaming complete, show audio loader if needed
                                 else if (data.streaming_done === true) {
@@ -794,12 +850,7 @@
                                     chunkCount++;
                                     accumulatedText += data.chunk;
                                     contentDiv.textContent = accumulatedText;
-                                    
-                                    // Only auto-scroll if user is near the bottom (within 100px)
-                                    const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-                                    if (isNearBottom) {
-                                        chatContainer.scrollTop = chatContainer.scrollHeight;
-                                    }
+                                    // Don't force scroll - let user explore previous messages
                                 } 
                                 // Handle streaming complete, show audio loader if needed
                                 else if (data.streaming_done === true) {

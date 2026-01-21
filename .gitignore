@@ -8,3 +8,4 @@ kokoro_outputs/
 .idea
 .github
 .roo
+.DS_Store
