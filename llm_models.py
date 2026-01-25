@@ -34,13 +34,17 @@ nemotron_local_llm = ChatOpenAI(
 nemotron_stream_local_llm = ChatOpenAI(
     base_url="http://localhost:1234/v1",
     api_key="test",
-    temperature=0.5,
+    temperature=0.7,
     model="nvidia/nemotron-3-nano",
     top_p= 0.85,
     max_completion_tokens= 10000,
     model_kwargs= {
-        "frequency_penalty": 1.3, # Heavily discourages "The speaker says..." loops
-        "presence_penalty": 0.7,  # Encourages introducing new topics/facts
+        "frequency_penalty": 1, # Heavily discourages "The speaker says..." loops
+        "presence_penalty": 0.5,  # Encourages introducing new topics/facts
+    },
+    extra_body={
+        "min_p": 0.05,
+        "repeat_penalty": 1.1
     },
     streaming=True,
     stream_usage=True,

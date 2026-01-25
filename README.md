@@ -70,6 +70,28 @@ To enable email sending functionality:
 3. **Add to Shell Profile (Optional):**
    Add the above exports to your `~/.zshrc` or `~/.bashrc` to make them permanent.
 
+## Telegram Configuration
+
+To enable Telegram messaging functionality:
+
+1. **Create a Telegram Bot:**
+   - Open Telegram and search for @BotFather
+   - Send `/newbot` and follow the instructions
+   - Copy the bot token (format: `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+
+2. **Get Your Chat ID:**
+   - Send a message to @userinfobot on Telegram
+   - Copy your chat ID (numeric ID)
+
+3. **Set Environment Variables:**
+   ```bash
+   export TELEGRAM_BOT_TOKEN='your-bot-token'
+   export TELEGRAM_CHAT_ID='your-chat-id'
+   ```
+
+4. **Add to Shell Profile (Optional):**
+   Add the above exports to your `~/.zshrc` or `~/.bashrc` to make them permanent.
+
 ## Usage
 
 ### Command-Line Interface

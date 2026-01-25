@@ -24,7 +24,8 @@ from langchain.callbacks import get_openai_callback
 from kokoro_tts import generate_audio, create_audio_file
 from llm_models import get_model
 from utils import remove_thinking_tokens
-from email_sender import send_email_with_audio
+from email_sender import send_email_with_audio, send_email_with_attachments
+from telegram_sender import send_telegram_with_audio, send_telegram_with_attachments
 
 
 app = Flask(__name__)
@@ -245,6 +246,198 @@ def send_email():
             
     except Exception as e:
         print(f"[ERROR] send_email endpoint failed: {e}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/send_telegram', methods=['POST'])
+def send_telegram():
+    """Send condensed content with audio via Telegram"""
+    data = request.json
+    audio_file = data.get('audio_file')
+    content = data.get('content')
+    mode = data.get('mode', 'news')
+    
+    # Get Telegram credentials from environment variables
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    
+    if not bot_token:
+        print("[ERROR] TELEGRAM_BOT_TOKEN environment variable not set")
+        return jsonify({'error': 'Telegram bot token not configured. Set TELEGRAM_BOT_TOKEN environment variable.', 'success': False}), 500
+    
+    if not chat_id:
+        print("[ERROR] TELEGRAM_CHAT_ID environment variable not set")
+        return jsonify({'error': 'Telegram chat ID not configured. Set TELEGRAM_CHAT_ID environment variable.', 'success': False}), 500
+    
+    if not audio_file:
+        return jsonify({'error': 'Audio file not found', 'success': False}), 400
+    
+    try:
+        # Build audio file path
+        audio_file_path = os.path.join('kokoro_outputs', audio_file)
+        
+        if not os.path.exists(audio_file_path):
+            return jsonify({'error': 'Audio file does not exist', 'success': False}), 404
+        
+        # Create message text
+        content_type = 'Article' if mode == 'news' else 'Video Transcript'
+        
+        # Truncate content if too long for Telegram message (4096 char limit)
+        message_content = content[:3500] + '...' if len(content) > 3500 else content
+        message = f"📝 Condensed {content_type}:\n\n{message_content}"
+        
+        print(f"[INFO] Sending to Telegram chat {chat_id}...")
+        success = send_telegram_with_audio(
+            chat_id=chat_id,
+            message=message,
+            audio_file_path=audio_file_path,
+            bot_token=bot_token
+        )
+        
+        if success:
+            print(f"[SUCCESS] Telegram message sent to {chat_id}")
+            return jsonify({'success': True, 'message': 'Telegram message sent successfully'})
+        else:
+            print(f"[ERROR] Failed to send Telegram message to {chat_id}")
+            return jsonify({'error': 'Failed to send Telegram message. Check server logs for details.', 'success': False}), 500
+            
+    except Exception as e:
+        print(f"[ERROR] send_telegram endpoint failed: {e}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/send_quick_email', methods=['POST'])
+def send_quick_email():
+    """Send quick email with custom message and attachments from UI"""
+    message = request.form.get('message')
+    files = request.files.getlist('attachments')
+    
+    # Get recipient email from environment variable
+    recipient_email = os.getenv('RECIPIENT_GMAIL_ADDRESS')
+    
+    if not recipient_email:
+        print("[ERROR] RECIPIENT_GMAIL_ADDRESS environment variable not set")
+        return jsonify({'error': 'Recipient email not configured. Set RECIPIENT_GMAIL_ADDRESS environment variable.', 'success': False}), 500
+    
+    if not message:
+        return jsonify({'error': 'Message is required', 'success': False}), 400
+    
+    try:
+        # Save uploaded files temporarily
+        temp_dir = 'temp_attachments'
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        attachment_paths = []
+        for file in files:
+            if file.filename:
+                file_path = os.path.join(temp_dir, file.filename)
+                file.save(file_path)
+                attachment_paths.append(file_path)
+                print(f"[INFO] Saved temporary attachment: {file.filename}")
+        
+        # Send email
+        subject = 'Quick Message from Content Analyzer'
+        
+        print(f"[INFO] Sending quick email to {recipient_email}...")
+        success = send_email_with_attachments(
+            recipient_email=recipient_email,
+            subject=subject,
+            body_text=message,
+            attachment_paths=attachment_paths if attachment_paths else None
+        )
+        
+        # Clean up temporary files
+        for file_path in attachment_paths:
+            try:
+                os.remove(file_path)
+                print(f"[INFO] Cleaned up temporary file: {file_path}")
+            except Exception as e:
+                print(f"[WARNING] Failed to remove temp file {file_path}: {e}")
+        
+        # Remove temp directory if empty
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+        
+        if success:
+            print(f"[SUCCESS] Quick email sent to {recipient_email}")
+            return jsonify({'success': True, 'message': 'Email sent successfully'})
+        else:
+            print(f"[ERROR] Failed to send quick email to {recipient_email}")
+            return jsonify({'error': 'Failed to send email. Check server logs for details.', 'success': False}), 500
+            
+    except Exception as e:
+        print(f"[ERROR] send_quick_email endpoint failed: {e}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/send_quick_telegram', methods=['POST'])
+def send_quick_telegram():
+    """Send quick Telegram message with custom text and attachments from UI"""
+    message = request.form.get('message')
+    files = request.files.getlist('attachments')
+    
+    # Get Telegram credentials from environment variables
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    
+    if not bot_token:
+        print("[ERROR] TELEGRAM_BOT_TOKEN environment variable not set")
+        return jsonify({'error': 'Telegram bot token not configured. Set TELEGRAM_BOT_TOKEN environment variable.', 'success': False}), 500
+    
+    if not chat_id:
+        print("[ERROR] TELEGRAM_CHAT_ID environment variable not set")
+        return jsonify({'error': 'Telegram chat ID not configured. Set TELEGRAM_CHAT_ID environment variable.', 'success': False}), 500
+    
+    if not message:
+        return jsonify({'error': 'Message is required', 'success': False}), 400
+    
+    try:
+        # Save uploaded files temporarily
+        temp_dir = 'temp_attachments'
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        attachment_paths = []
+        for file in files:
+            if file.filename:
+                file_path = os.path.join(temp_dir, file.filename)
+                file.save(file_path)
+                attachment_paths.append(file_path)
+                print(f"[INFO] Saved temporary attachment: {file.filename}")
+        
+        # Send Telegram message
+        print(f"[INFO] Sending quick Telegram message to {chat_id}...")
+        success = send_telegram_with_attachments(
+            chat_id=chat_id,
+            message=message,
+            attachment_paths=attachment_paths if attachment_paths else None,
+            bot_token=bot_token
+        )
+        
+        # Clean up temporary files
+        for file_path in attachment_paths:
+            try:
+                os.remove(file_path)
+                print(f"[INFO] Cleaned up temporary file: {file_path}")
+            except Exception as e:
+                print(f"[WARNING] Failed to remove temp file {file_path}: {e}")
+        
+        # Remove temp directory if empty
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+        
+        if success:
+            print(f"[SUCCESS] Quick Telegram message sent to {chat_id}")
+            return jsonify({'success': True, 'message': 'Telegram message sent successfully'})
+        else:
+            print(f"[ERROR] Failed to send quick Telegram message to {chat_id}")
+            return jsonify({'error': 'Failed to send Telegram message. Check server logs for details.', 'success': False}), 500
+            
+    except Exception as e:
+        print(f"[ERROR] send_quick_telegram endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
 
 
