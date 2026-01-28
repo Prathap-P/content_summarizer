@@ -111,6 +111,7 @@ def load_content():
     data = request.json
     url = data.get('url')
     mode = data.get('mode', 'news')  # 'news' or 'youtube'
+    auto_send_telegram = data.get('auto_send_telegram', False)  # Only true for auto-processor
 
     if not url:
         return jsonify({'error': 'URL is required'}), 400
@@ -159,7 +160,7 @@ def load_content():
         
         # Step 3: Generate audio for condensed content
         audio_file = None
-        audio_time = None
+        audio_file_path = None
         print(f"[INFO] Generating audio for condensed content ({len(condensed_content)} chars)...")
         audio_start_time = time.time()
         
@@ -172,15 +173,60 @@ def load_content():
             print(f"[SUCCESS] Audio generated: {audio_file}")
             print(f"[TIME] Audio generation took: {audio_time:.2f}s")
         except Exception as e:
-            print(f"[ERROR] Audio generation failed: {e}")
+            error_msg = f"Audio generation failed: {e}"
+            print(f"[ERROR] {error_msg}")
+            if auto_send_telegram:
+                return jsonify({'error': error_msg, 'success': False}), 422
+            # For manual load, audio failure is not critical
+            print(f"[WARNING] Continuing without audio")
         
-        # Step 4: Store condensed content in conversation memory for future Q&A
+        # Step 4: Send to Telegram only if auto_send_telegram is True
+        if auto_send_telegram:
+            print(f"[INFO] Auto-sending to Telegram...")
+            try:
+                chat_id = os.getenv('TELEGRAM_CHAT_ID')
+                bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+                
+                if not chat_id or not bot_token:
+                    error_msg = "Telegram credentials not configured (TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN required)"
+                    print(f"[ERROR] {error_msg}")
+                    return jsonify({'error': error_msg, 'success': False}), 422
+                
+                if not audio_file_path:
+                    error_msg = "Cannot send to Telegram: Audio file not generated"
+                    print(f"[ERROR] {error_msg}")
+                    return jsonify({'error': error_msg, 'success': False}), 422
+                
+                content_type = 'Article' if mode == 'news' else 'YouTube Video'
+                url_section = f"\n🔗 Source: {url}\n" if url else ""
+                message = f"📝 Condensed {content_type}:{url_section}\n{condensed_content}"
+                
+                telegram_success = send_telegram_with_audio(
+                    chat_id=chat_id,
+                    message=message,
+                    audio_file_path=audio_file_path,
+                    bot_token=bot_token
+                )
+                
+                if not telegram_success:
+                    error_msg = "Failed to send content to Telegram"
+                    print(f"[ERROR] {error_msg}")
+                    return jsonify({'error': error_msg, 'success': False}), 422
+                
+                print(f"[SUCCESS] Content sent to Telegram successfully")
+            except Exception as e:
+                error_msg = f"Telegram sending failed: {e}"
+                print(f"[ERROR] {error_msg}")
+                print(f"[ERROR] {error_msg}")
+            return jsonify({'error': error_msg, 'success': False}), 422
+        
+        # Step 5: Store condensed content in conversation memory for future Q&A
         # The memory now contains: system prompt (from create_runnable_chain) + condensed input
         session_history.add_user_message(f"Here is the condensed {'article' if mode == 'news' else 'video transcript'} content (Original: {raw_word_count} words, Condensed: {condensed_word_count} words):\n\n{condensed_content}")
         session_history.add_ai_message(f"I have received and processed the condensed content. I'm ready to answer your questions about it.")
         print(f"[INFO] Condensed content added to memory. Ready for Q&A.")
 
-        # Return the condensed content to display to user
+        # Return success only if everything succeeded
         return jsonify({
             'content': condensed_content,
             'mode': mode,
@@ -191,9 +237,13 @@ def load_content():
             'success': True
         })
 
+    except ValueError as e:
+        # ValueError is raised when thinking tokens aren't removed properly
+        print(f"[ERROR] Thinking token validation failed: {e}")
+        return jsonify({'error': str(e), 'success': False}), 422
     except Exception as e:
         print(f"[ERROR] load_content failed: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'success': False}), 500
 
 
 @app.route('/send_email', methods=['POST'])
@@ -203,6 +253,7 @@ def send_email():
     audio_file = data.get('audio_file')
     content = data.get('content')
     mode = data.get('mode', 'news')
+    url = data.get('url', '')
     
     # Get recipient email from environment variable
     recipient_email = os.getenv('RECIPIENT_GMAIL_ADDRESS')
@@ -227,7 +278,10 @@ def send_email():
         
         # Truncate content if too long for email body
         body_content = content[:2000] + '...' if len(content) > 2000 else content
-        body_text = f"Here is the condensed {content_type.lower()}:\n\n{body_content}\n\nPlease find the audio file attached."
+        
+        # Include source URL in email body
+        url_section = f"\n\nSource URL: {url}\n" if url else ""
+        body_text = f"Here is the condensed {content_type.lower()}:{url_section}\n\n{body_content}\n\nPlease find the audio file attached."
         
         print(f"[INFO] Sending email to {recipient_email}...")
         success = send_email_with_audio(
@@ -256,6 +310,7 @@ def send_telegram():
     audio_file = data.get('audio_file')
     content = data.get('content')
     mode = data.get('mode', 'news')
+    url = data.get('url', '')
     
     # Get Telegram credentials from environment variables
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -282,11 +337,14 @@ def send_telegram():
         # Create message text
         content_type = 'Article' if mode == 'news' else 'Video Transcript'
         
-        # Truncate content if too long for Telegram message (4096 char limit)
-        message_content = content[:3500] + '...' if len(content) > 3500 else content
-        message = f"📝 Condensed {content_type}:\n\n{message_content}"
+        # Include source URL
+        url_section = f"\n🔗 Source: {url}\n" if url else ""
+        
+        # Don't truncate - let telegram_sender handle splitting
+        message = f"📝 Condensed {content_type}:{url_section}\n{content}"
         
         print(f"[INFO] Sending to Telegram chat {chat_id}...")
+        print(f"[DEBUG] Message length: {len(message)} characters")
         success = send_telegram_with_audio(
             chat_id=chat_id,
             message=message,
@@ -475,7 +533,11 @@ def chat():
         response_text = response['response']
         
         # Remove thinking tokens from response
-        response_text = remove_thinking_tokens(response_text)
+        response_text, thinking_tokens_removed = remove_thinking_tokens(response_text)
+        if not thinking_tokens_removed:
+            error_msg = "Failed to remove thinking tokens from LLM response"
+            print(f"[ERROR] {error_msg}")
+            return jsonify({'error': error_msg, 'success': False}), 422
         
         print(f"[SUCCESS] LLM response generated. Length: {len(response_text)} characters")
         print(f"[TOKENS] Prompt: {token_usage['prompt_tokens']}, Completion: {token_usage['completion_tokens']}, Total: {token_usage['total_tokens']}")
@@ -588,7 +650,13 @@ def stream_chat():
             print(f"[INFO] Streaming complete. Time: {llm_time:.2f}s, Chunks: {total_chunk_size} chars")
 
             # Remove thinking tokens from complete response
-            complete_response_text = remove_thinking_tokens(complete_response_text)
+            complete_response_text, thinking_tokens_removed = remove_thinking_tokens(complete_response_text)
+            if not thinking_tokens_removed:
+                error_msg = "Failed to remove thinking tokens from LLM response"
+                print(f"[ERROR] {error_msg}")
+                error_data = {'error': error_msg}
+                yield f"data:{json.dumps(error_data)}\n\n"
+                return
             print(f"[DEBUG] After thinking token removal: {len(complete_response_text)} chars")
 
             # print(f"[SUCCESS] LLM streaming response completed. Length: {total_chunk_size} characters")

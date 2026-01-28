@@ -1,7 +1,7 @@
 import re
 
 
-def remove_thinking_tokens(text: str) -> str:
+def remove_thinking_tokens(text: str) -> tuple[str, bool]:
     """
     Extract final script from LLM response by finding content within <final_script> tags.
     
@@ -13,11 +13,11 @@ def remove_thinking_tokens(text: str) -> str:
         text: Raw LLM response text containing <final_script> tags
 
     Returns:
-        Cleaned text extracted from final_script tags, or original text if tags not found
+        Tuple of (cleaned_text, success_bool) where success_bool indicates if tags were found
     """
     if not text:
         print("[DEBUG] remove_thinking_tokens: Empty text received")
-        return text
+        return text, False
 
     print(f"[DEBUG] remove_thinking_tokens: Processing {len(text)} characters")
     original_length = len(text)
@@ -36,8 +36,8 @@ def remove_thinking_tokens(text: str) -> str:
         
         print(f"[INFO] Found <final_script> tags, extracting content from last occurrence")
         print(f"[CLEANUP] Extracted {len(final_content)} chars from final_script tag (removed {original_length - len(final_content)} chars)")
-        return final_content
+        return final_content, True
     else:
-        print("[WARNING] No valid <final_script> tags found, returning original text")
+        print("[WARNING] No valid <final_script> tags found, thinking tokens not properly removed")
         print(f"[DEBUG] Original text content:\n{text}")
-        return text.strip()
+        return text.strip(), False

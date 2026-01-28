@@ -37,7 +37,7 @@ nemotron_stream_local_llm = ChatOpenAI(
     temperature=0.7,
     model="nvidia/nemotron-3-nano",
     top_p= 0.85,
-    max_completion_tokens= 10000,
+    max_completion_tokens= 15000,
     model_kwargs= {
         "frequency_penalty": 1, # Heavily discourages "The speaker says..." loops
         "presence_penalty": 0.5,  # Encourages introducing new topics/facts

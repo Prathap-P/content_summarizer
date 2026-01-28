@@ -94,11 +94,13 @@ def send_telegram_with_audio(
         return False
     
     try:
-        # Send text message first
-        print(f"[INFO] Sending message to Telegram chat {chat_id}...")
-        text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        # texplit message if it exceeds character limit
+        # Split message if it exceeds character limit
         message_chunks = split_message(message)
+        
+        print(f"[DEBUG] Message length: {len(message)} chars")
+        print(f"[DEBUG] Split into {len(message_chunks)} chunks")
+        for idx, chunk in enumerate(message_chunks, 1):
+            print(f"[DEBUG] Chunk {idx} length: {len(chunk)} chars")
         
         print(f"[INFO] Sending message to Telegram chat {chat_id} ({len(message_chunks)} part(s))...")
         text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -115,7 +117,10 @@ def send_telegram_with_audio(
                 print(f"[ERROR] Failed to send message part {i}: {text_response.text}")
                 return False
         
-        print(f"[SUCCESS] All message parts sent ({len(message_chunks)} message(s)){audio_path.name}")
+        print(f"[SUCCESS] All message parts sent ({len(message_chunks)} message(s))")
+        
+        # Send audio file
+        print(f"[INFO] Sending audio file: {audio_path.name}")
         audio_url = f"https://api.telegram.org/bot{bot_token}/sendAudio"
         
         with open(audio_file_path, 'rb') as audio_file:
@@ -129,6 +134,23 @@ def send_telegram_with_audio(
                 return False
         
         print(f"[SUCCESS] Audio file sent successfully")
+        
+        # Send separator messages to denote end of transaction
+        print(f"[INFO] Sending separator messages...")
+        text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        separator_messages = [
+            "─" * 30,
+            "─" * 30,
+            "─" * 30
+        ]
+        
+        for separator in separator_messages:
+            requests.post(text_url, data={
+                'chat_id': chat_id,
+                'text': separator
+            })
+        
+        print(f"[SUCCESS] Transaction completed with separators")
         return True
         
     except requests.exceptions.RequestException as e:

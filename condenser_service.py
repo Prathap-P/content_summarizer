@@ -33,7 +33,11 @@ def condense_content(content: str, current_model):
                 chunk_response_text += str(streamed_chunk)
         
         print(f"[DEBUG] MAP chunk {idx} streaming complete: {len(chunk_response_text)} chars")
-        cleaned_chunk_response = remove_thinking_tokens(chunk_response_text)
+        cleaned_chunk_response, success = remove_thinking_tokens(chunk_response_text)
+        if not success:
+            error_msg = f"Failed to remove thinking tokens from MAP chunk {idx}/{len(chunks)}"
+            print(f"[ERROR] {error_msg}")
+            raise ValueError(error_msg)
         processed_chunks.append(cleaned_chunk_response)
         print(f"[DEBUG] Cleaned chunk {idx} processed: {len(cleaned_chunk_response)} chars")
 
@@ -62,7 +66,11 @@ def condense_content(content: str, current_model):
             reduce_response_text += str(streamed_chunk)
     
     print(f"[DEBUG] REDUCE streaming complete: {len(reduce_response_text)} chars")
-    cleaned_reduce_response = remove_thinking_tokens(reduce_response_text)
+    cleaned_reduce_response, success = remove_thinking_tokens(reduce_response_text)
+    if not success:
+        error_msg = "Failed to remove thinking tokens from REDUCE phase"
+        print(f"[ERROR] {error_msg}")
+        raise ValueError(error_msg)
 
     print(f"[INFO] REDUCE phase complete: {len(cleaned_reduce_response)} chars (cleaned response)")
     print(f"[SUCCESS] Condensation complete. Original: {len(content)} -> Final: {len(cleaned_reduce_response)} chars")

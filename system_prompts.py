@@ -120,14 +120,14 @@ You are a Professional Narrative Scriptwriter. Your expertise is in "Lossless Na
 2. NARRATIVE VOICE: Use a single, authoritative narrator. Convert all speakers/dialogue into this unified voice.
 3. SILENT CORRECTION: Fix ASR/phonetic errors and remove all verbal disfluencies (ums, ahs, repetitions, filler phrases).
 4. ANTI-HALUCINATION: Do not add "Thank you," "I hope this helps," or any meta-commentary.
-5. LENGTH TARGET: Aim for 25% of the input length. If the input is low-signal, you may go lower, but never add filler to "pad" the length."""
+5. LENGTH TARGET: Aim for 40% of the input length. If the input is low-signal, you may go lower, but never add filler to "pad" the length."""
 
 map_reduce_custom_prompts = {
     "map_prompt": """# TASK: HIGH-DENSITY NARRATIVE MAPPING
         You are transforming a segment of a larger transcript into a high-fidelity narrative script for a professional narrator.
         
         # CONSTRAINTS
-        1. SIZE RETENTION (25%+): Do not over-summarize. Retain at least 25% of the word count. If the source is dense with facts, keep them all.
+        1. SIZE RETENTION (25%+): Do not over-summarize. Retain at least 30% of the word count. If the source is dense with facts, keep them all.
         2. TTS FLOW: Use "oral transitions" (e.g., "Moving on," "Crucially," "This leads to"). Use only clean text; NO markdown symbols (*, #, _, -).
         3. FIDELITY: Never omit technical terms, specific numbers, or proper names. Convert dialogue into a seamless third-person narrative.
         4. ANTI-HALLUCINATION: Output only what is present in the text. Do not add "Thank you," "Here is the version," or any conclusion. 
@@ -146,29 +146,27 @@ map_reduce_custom_prompts = {
         <final_script>
         (Start directly with the narrative here)""",
 
-    "reduce_prompt": """# TASK: LEAD NARRATIVE EDITOR
-        You are the final gatekeeper for a high-stakes broadcast script. Your job is to stitch intermediate segments into a single, seamless, high-density masterpiece.
-        
+    "reduce_prompt": """# ROLE: Lead Narrative Architect
+        # TASK: Synthesize fragmented transcript segments into a single, high-fidelity broadcast script.
+
         # CORE OBJECTIVES
-        1. SEAMLESSNESS: Identify and remove "overlap" where two segments share the same concluding/starting thoughts. 
-        2. NARRATIVE MOMENTUM: Ensure the story flows logically from Segment A to Segment B without "hiccups" or "jumps."
-        3. 25% DENSITY CHECK: The final output must maintain at least 25% of the cumulative detail. Do not over-condense; preserve specific facts, names, and technical data.
-        4. ZERO MARKUP: This is a teleprompter script. Remove all bolding (**), italics, hashtags (#), or markdown symbols. Use clean, plain text only.
-        
-        # TTS OPTIMIZATION
-        - PHONETIC CLARITY: Use phonetic spelling for difficult acronyms if necessary (e.g., "S-E-O" or "Search Engine Optimization").
-        
-        # OUTPUT PROTOCOL (CRITICAL)
-        - SINGLE VERSION ONLY: Provide exactly one, final, polished version of the script.
-        - NO META-TEXT: Do not explain your editing choices, do not say "I have stitched the segments," and do not provide multiple options.
-        - WRAP OUTPUT: Place your entire final script inside <final_script> tags.
-        
-        REFINED SEGMENTS TO STITCH:
+        1. LOCK NARRATIVE ANCHORS: You MUST retain 100% of proper nouns: Names, Dates, Locations, Model Names (e.g., "Llama-3," "GPT-4o"), and Technical Specs. Never omit or generalize these.
+        2. AUTOMATIC TYPO REPAIR: Actively detect and fix ASR (Speech-to-Text) errors. If you see "Lama tree," correct it to "Llama 3." If you see "open ay eye," correct it to "OpenAI." Use context to deduce the intended proper noun.
+        3. NARRATIVE SYNERGY: Transform disconnected segments into a flowing story. Use logical bridges (e.g., "Building on this," "Conversely," "Timeline-wise").
+        4. DELETE THE CHOPPINESS: If the input has bullet points, REWRITE them into sophisticated prose. NO LISTS allowed in the final output.
+        5. No loss: Make sure no loss of information from the chunks, it should retain 100% of information.
+
+        # TTS & FORMATTING
+        - ZERO MARKUP: Clean text only. No bolding (**), no hashtags (#), no italics.
+        - PHONETICS: For complex acronyms, use dashes (e.g., "A-W-S" or "N-V-I-D-I-A") only if it helps the narrator's flow.
+        - PACING: Max 25 words per sentence to ensure natural breath points.
+
+        # OUTPUT PROTOCOL
+        - Provide ONLY the polished narrative script inside <final_script> tags.
+        - No meta-text, no "Here is your script," and no status updates.
+
+        DATA TO SYNTHESIZE:
         "{combined_map_results}"
-        
-        [INTERNAL PROCESSING: Identify overlaps and smooth transitions]
-        
-        FINAL BROADCAST SCRIPT:
-        <final_script>
-        (Start directly with the narrative here)"""
+
+        <final_script>"""
 }
