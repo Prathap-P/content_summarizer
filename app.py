@@ -186,6 +186,7 @@ def load_content():
             try:
                 chat_id = os.getenv('TELEGRAM_CHAT_ID')
                 bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+                channel_id = os.getenv('TELEGRAM_CHANNEL_ID')  # Optional channel for posting
                 
                 if not chat_id or not bot_token:
                     error_msg = "Telegram credentials not configured (TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN required)"
@@ -198,14 +199,15 @@ def load_content():
                     return jsonify({'error': error_msg, 'success': False}), 422
                 
                 content_type = 'Article' if mode == 'news' else 'YouTube Video'
-                url_section = f"\n🔗 Source: {url}\n" if url else ""
-                message = f"📝 Condensed {content_type}:{url_section}\n{condensed_content}"
+                message = f"📝 Condensed {content_type}\n\n{condensed_content}"
                 
                 telegram_success = send_telegram_with_audio(
                     chat_id=chat_id,
                     message=message,
                     audio_file_path=audio_file_path,
-                    bot_token=bot_token
+                    bot_token=bot_token,
+                    source_url=url,
+                    channel_id=channel_id if channel_id else None
                 )
                 
                 if not telegram_success:
@@ -328,6 +330,7 @@ def send_telegram():
     # Get Telegram credentials from environment variables
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    channel_id = os.getenv('TELEGRAM_CHANNEL_ID')  # Optional channel for posting
     
     if not bot_token:
         print("[ERROR] TELEGRAM_BOT_TOKEN environment variable not set")
@@ -350,11 +353,8 @@ def send_telegram():
         # Create message text
         content_type = 'Article' if mode == 'news' else 'Video Transcript'
         
-        # Include source URL
-        url_section = f"\n🔗 Source: {url}\n" if url else ""
-        
-        # Don't truncate - let telegram_sender handle splitting
-        message = f"📝 Condensed {content_type}:{url_section}\n{content}"
+        # Don't include URL in message since it will be sent separately
+        message = f"📝 Condensed {content_type}\n\n{content}"
         
         print(f"[INFO] Sending to Telegram chat {chat_id}...")
         print(f"[DEBUG] Message length: {len(message)} characters")
@@ -362,7 +362,9 @@ def send_telegram():
             chat_id=chat_id,
             message=message,
             audio_file_path=audio_file_path,
-            bot_token=bot_token
+            bot_token=bot_token,
+            source_url=url,
+            channel_id=channel_id if channel_id else None
         )
         
         if success:

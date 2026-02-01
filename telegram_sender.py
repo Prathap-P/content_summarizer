@@ -1,11 +1,44 @@
 import os
 import requests
+import time
 from typing import Optional, List
 from pathlib import Path
 
 
 # Telegram message character limit
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+
+
+def get_discussion_group_id(channel_id: str, bot_token: str) -> Optional[str]:
+    """
+    Get the linked discussion group ID for a Telegram channel.
+    
+    Args:
+        channel_id: Channel ID (e.g., '-1003892267199')
+        bot_token: Telegram bot token
+        
+    Returns:
+        Discussion group chat ID if linked, None otherwise
+    """
+    try:
+        get_chat_url = f"https://api.telegram.org/bot{bot_token}/getChat"
+        response = requests.post(get_chat_url, data={'chat_id': channel_id})
+        
+        if response.ok:
+            chat_info = response.json()
+            if 'result' in chat_info and 'linked_chat_id' in chat_info['result']:
+                linked_id = chat_info['result']['linked_chat_id']
+                print(f"[INFO] Found linked discussion group: {linked_id}")
+                return str(linked_id)
+            else:
+                print(f"[WARNING] Channel {channel_id} has no linked discussion group")
+                return None
+        else:
+            print(f"[ERROR] Failed to get chat info: {response.text}")
+            return None
+    except Exception as e:
+        print(f"[ERROR] Exception getting discussion group: {str(e)}")
+        return None
 
 
 def split_message(message: str, max_length: int = TELEGRAM_MAX_MESSAGE_LENGTH) -> List[str]:
@@ -58,16 +91,30 @@ def send_telegram_with_audio(
     chat_id: str,
     message: str,
     audio_file_path: str,
-    bot_token: Optional[str] = None
+    bot_token: Optional[str] = None,
+    source_url: Optional[str] = None,
+    channel_id: Optional[str] = None
 ) -> bool:
     """
     Send a Telegram message with a single audio file attachment.
     
+    If channel_id provided:
+        1) Send URL link to channel (broadcast post)
+        2) Send audio file to linked discussion group (as comment)
+        3) Send text content to discussion group (as comment)
+    
+    If no channel_id:
+        1) Send URL link to chat_id
+        2) Send audio file to chat_id
+        3) Send text content to chat_id
+    
     Args:
-        chat_id: Telegram chat ID or username (@username)
+        chat_id: Telegram chat ID (fallback if no channel_id)
         message: Text message to send
         audio_file_path: Path to the audio file to attach
         bot_token: Telegram bot token (defaults to env var TELEGRAM_BOT_TOKEN)
+        source_url: Optional source URL to send first
+        channel_id: Optional channel ID for posting to channel + discussion group
         
     Returns:
         True if message sent successfully, False otherwise
@@ -94,63 +141,193 @@ def send_telegram_with_audio(
         return False
     
     try:
-        # Split message if it exceeds character limit
-        message_chunks = split_message(message)
-        
-        print(f"[DEBUG] Message length: {len(message)} chars")
-        print(f"[DEBUG] Split into {len(message_chunks)} chunks")
-        for idx, chunk in enumerate(message_chunks, 1):
-            print(f"[DEBUG] Chunk {idx} length: {len(chunk)} chars")
-        
-        print(f"[INFO] Sending message to Telegram chat {chat_id} ({len(message_chunks)} part(s))...")
         text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        
-        # Send all message chunks in order
-        for i, chunk in enumerate(message_chunks, 1):
-            print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
-            text_response = requests.post(text_url, data={
-                'chat_id': chat_id,
-                'text': chunk
-            })
-            
-            if not text_response.ok:
-                print(f"[ERROR] Failed to send message part {i}: {text_response.text}")
-                return False
-        
-        print(f"[SUCCESS] All message parts sent ({len(message_chunks)} message(s))")
-        
-        # Send audio file
-        print(f"[INFO] Sending audio file: {audio_path.name}")
         audio_url = f"https://api.telegram.org/bot{bot_token}/sendAudio"
         
-        with open(audio_file_path, 'rb') as audio_file:
-            files = {'audio': (audio_path.name, audio_file, 'audio/wav')}
-            data = {'chat_id': chat_id}
-            
-            audio_response = requests.post(audio_url, data=data, files=files)
-            
-            if not audio_response.ok:
-                print(f"[ERROR] Failed to send audio: {audio_response.text}")
-                return False
+        # Determine target chat for comments (discussion group or fallback to chat_id)
+        comment_chat_id = chat_id
         
-        print(f"[SUCCESS] Audio file sent successfully")
+        # If channel_id provided, use channel + discussion group workflow
+        if channel_id:
+            print(f"[INFO] Using channel mode: post to channel {channel_id}, reply in group {chat_id}")
+            
+            # Step 1: Send URL link to CHANNEL (will auto-forward to discussion group)
+            if not source_url:
+                print(f"[ERROR] source_url is required for channel mode")
+                return False
+                
+            print(f"[INFO] Sending source URL to channel {channel_id}...")
+            url_response = requests.post(text_url, data={
+                'chat_id': channel_id,
+                'text': f"🔗 Source: {source_url}"
+            })
+            
+            if not url_response.ok:
+                print(f"[ERROR] Failed to send URL to channel: {url_response.text}")
+                return False
+            
+            # Get channel message_id from response
+            channel_message_id = url_response.json()['result']['message_id']
+            print(f"[SUCCESS] Source URL posted to channel, message_id: {channel_message_id}")
+            
+            # Step 2: Wait for auto-forward to discussion group
+            print(f"[INFO] Waiting 3 seconds for auto-forward to discussion group...")
+            time.sleep(3)
+            
+            # Step 3: Find the forwarded message in discussion group using getUpdates
+            print(f"[INFO] Looking for forwarded message in discussion group {chat_id}...")
+            get_updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+            
+            discussion_message_id = None
+            max_attempts = 3
+            
+            for attempt in range(1, max_attempts + 1):
+                print(f"[INFO] Attempt {attempt}/{max_attempts}...")
+                
+                updates_response = requests.get(get_updates_url, params={'limit': 100}, timeout=10)
+                
+                if updates_response.ok:
+                    updates = updates_response.json().get('result', [])
+                    
+                    # Find message with forward_from_message_id matching our channel post
+                    for update in reversed(updates):
+                        if 'message' in update:
+                            msg = update['message']
+                            msg_chat_id = str(msg.get('chat', {}).get('id', ''))
+                            forward_from_message_id = msg.get('forward_from_message_id')
+                            
+                            # Check if this is the forwarded message from our channel post
+                            if (msg_chat_id == str(chat_id) and 
+                                forward_from_message_id == channel_message_id):
+                                
+                                discussion_message_id = msg['message_id']
+                                print(f"[SUCCESS] Found forwarded message: channel_msg={channel_message_id} → discussion_msg={discussion_message_id}")
+                                break
+                
+                if discussion_message_id:
+                    break
+                
+                if attempt < max_attempts:
+                    print(f"[INFO] Not found yet, waiting 2 more seconds...")
+                    time.sleep(2)
+            
+            if not discussion_message_id:
+                print(f"[WARNING] Could not find forwarded message after {max_attempts} attempts")
+                print(f"[INFO] Sending audio and text without threading")
+            
+            # Step 4: Send audio file to discussion group as reply
+            print(f"[INFO] Sending audio to discussion group {chat_id}...")
+            
+            with open(audio_file_path, 'rb') as audio_file:
+                files = {'audio': (audio_path.name, audio_file, 'audio/wav')}
+                data = {'chat_id': chat_id}
+                
+                if discussion_message_id:
+                    data['reply_to_message_id'] = discussion_message_id
+                
+                audio_response = requests.post(audio_url, data=data, files=files)
+                
+                if not audio_response.ok:
+                    print(f"[ERROR] Failed to send audio: {audio_response.text}")
+                    return False
+            
+            print(f"[SUCCESS] Audio sent to discussion group")
+            
+            # Step 5: Send text content to discussion group as reply
+            message_chunks = split_message(message)
+            
+            print(f"[DEBUG] Message length: {len(message)} chars")
+            print(f"[DEBUG] Split into {len(message_chunks)} chunks")
+            for idx, chunk in enumerate(message_chunks, 1):
+                print(f"[DEBUG] Chunk {idx} length: {len(chunk)} chars")
+            
+            print(f"[INFO] Sending text content to discussion group ({len(message_chunks)} part(s))...")
+            
+            for i, chunk in enumerate(message_chunks, 1):
+                print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
+                
+                data = {
+                    'chat_id': chat_id,
+                    'text': chunk
+                }
+                
+                if discussion_message_id:
+                    data['reply_to_message_id'] = discussion_message_id
+                
+                text_response = requests.post(text_url, data=data)
+                
+                if not text_response.ok:
+                    print(f"[ERROR] Failed to send message part {i}: {text_response.text}")
+                    return False
+            
+            print(f"[SUCCESS] All messages sent as replies ({len(message_chunks)} part(s))")
+            
+        else:
+            # No channel mode - use old behavior
+            print(f"[INFO] Using direct chat mode: sending to {chat_id}")
+            
+            # Step 1: Send URL link if provided
+            if source_url:
+                print(f"[INFO] Sending source URL to chat {chat_id}...")
+                url_response = requests.post(text_url, data={
+                    'chat_id': chat_id,
+                    'text': f"🔗 Source: {source_url}"
+                })
+                
+                if not url_response.ok:
+                    print(f"[ERROR] Failed to send URL: {url_response.text}")
+                    return False
+                
+                print(f"[SUCCESS] Source URL sent")
+        
+            # Step 2: Send audio file to chat_id
+            print(f"[INFO] Sending audio file to {chat_id}: {audio_path.name}")
+            
+            with open(audio_file_path, 'rb') as audio_file:
+                files = {'audio': (audio_path.name, audio_file, 'audio/wav')}
+                data = {'chat_id': chat_id}
+                
+                audio_response = requests.post(audio_url, data=data, files=files)
+                
+                if not audio_response.ok:
+                    print(f"[ERROR] Failed to send audio: {audio_response.text}")
+                    return False
+            
+            print(f"[SUCCESS] Audio file sent successfully")
+            
+            # Step 3: Send text content (split into chunks if needed)
+            message_chunks = split_message(message)
+            
+            print(f"[DEBUG] Message length: {len(message)} chars")
+            print(f"[DEBUG] Split into {len(message_chunks)} chunks")
+            for idx, chunk in enumerate(message_chunks, 1):
+                print(f"[DEBUG] Chunk {idx} length: {len(chunk)} chars")
+            
+            print(f"[INFO] Sending text content to {chat_id} ({len(message_chunks)} part(s))...")
+            
+            # Send all message chunks in order
+            for i, chunk in enumerate(message_chunks, 1):
+                print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
+                text_response = requests.post(text_url, data={
+                    'chat_id': chat_id,
+                    'text': chunk
+                })
+                
+                if not text_response.ok:
+                    print(f"[ERROR] Failed to send message part {i}: {text_response.text}")
+                    return False
+            
+            print(f"[SUCCESS] All message parts sent ({len(message_chunks)} message(s))")
         
         # Send separator messages to denote end of transaction
-        print(f"[INFO] Sending separator messages...")
-        text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        separator_messages = [
-            "─" * 30,
-            "─" * 30,
-            "─" * 30
-        ]
+        # separator = "─" * 30
+        # for _ in range(3):
+        #     separator_response = requests.post(text_url, data={
+        #         'chat_id': chat_id if not channel_id else channel_id,
+        #         'text': separator
+        #     })
         
-        for separator in separator_messages:
-            requests.post(text_url, data={
-                'chat_id': chat_id,
-                'text': separator
-            })
-        
-        print(f"[SUCCESS] Transaction completed with separators")
+        print(f"[SUCCESS] Message with audio sent successfully to Telegram")
         return True
         
     except requests.exceptions.RequestException as e:
@@ -165,20 +342,23 @@ def send_telegram_with_audio(
 def send_telegram_with_attachments(
     chat_id: str,
     message: str,
-    attachment_paths: List[str] = None,
+    attachment_paths: Optional[List[str]] = None,
     bot_token: Optional[str] = None
 ) -> bool:
     """
-    Send a Telegram message with multiple file attachments.
+    Send a Telegram message with optional file attachments.
     
     Args:
         chat_id: Telegram chat ID or username (@username)
         message: Text message to send
-        attachment_paths: List of file paths to attach
+        attachment_paths: Optional list of file paths to attach
         bot_token: Telegram bot token (defaults to env var TELEGRAM_BOT_TOKEN)
         
     Returns:
         True if message sent successfully, False otherwise
+        
+    Environment Variables:
+        TELEGRAM_BOT_TOKEN: Your Telegram bot token from @BotFather
     """
     # Get bot token from env variable if not provided
     bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
@@ -193,13 +373,14 @@ def send_telegram_with_attachments(
         return False
     
     try:
-        # Split message if it exceeds character limit
+        text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        
+        # Split message if needed
         message_chunks = split_message(message)
         
         print(f"[INFO] Sending message to Telegram chat {chat_id} ({len(message_chunks)} part(s))...")
-        text_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         
-        # Send all message chunks in order
+        # Send all message chunks
         for i, chunk in enumerate(message_chunks, 1):
             print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
             text_response = requests.post(text_url, data={

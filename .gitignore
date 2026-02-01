@@ -9,3 +9,4 @@ kokoro_outputs/
 .github
 .roo
 .DS_Store
+backup_content/
