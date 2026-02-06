@@ -636,6 +636,35 @@
         </div>
     </div>
     
+    <!-- Text to Audio Tool -->
+    <div class="email-panel">
+        <h3>🎙️ Text to Audio</h3>
+        <div class="email-form">
+            <textarea 
+                id="audioText" 
+                placeholder="Paste or type text to convert to audio..."
+                style="min-height: 150px;"
+            ></textarea>
+            
+            <div id="audioStatus" style="margin: 10px 0; padding: 10px; border-radius: 6px; display: none;"></div>
+            
+            <div id="audioPlayer" style="margin: 10px 0; display: none;">
+                <audio controls style="width: 100%; border-radius: 6px;">
+                    <source id="audioSource" type="audio/wav">
+                </audio>
+            </div>
+            
+            <button 
+                class="btn btn-primary" 
+                onclick="generateAudio()" 
+                id="generateAudioBtn"
+                style="width: 100%; background: #9c27b0;"
+            >
+                🎙️ Generate Audio
+            </button>
+        </div>
+    </div>
+    
     <script>
         let selectedFiles = [];
         let isLoading = false;
@@ -890,6 +919,59 @@
             } finally {
                 quickTelegramBtn.disabled = false;
                 quickTelegramBtn.textContent = '✈️ Telegram';
+            }
+        }
+        
+        async function generateAudio() {
+            const text = document.getElementById('audioText').value.trim();
+            const btn = document.getElementById('generateAudioBtn');
+            const statusDiv = document.getElementById('audioStatus');
+            const playerDiv = document.getElementById('audioPlayer');
+            
+            if (!text) {
+                showAudioStatus('Please enter some text', 'error');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.textContent = '⏳ Generating...';
+            showAudioStatus('Processing text... This may take a moment for large text.', 'info');
+            playerDiv.style.display = 'none';
+            
+            try {
+                const response = await fetch('/text_to_audio', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ text: text })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    showAudioStatus(`✅ ${data.message}`, 'success');
+                    
+                    // Show audio player
+                    const audioSource = document.getElementById('audioSource');
+                    audioSource.src = `/kokoro_outputs/${data.audio_file}`;
+                    document.querySelector('#audioPlayer audio').load();
+                    playerDiv.style.display = 'block';
+                } else {
+                    showAudioStatus(`❌ ${data.error || 'Failed to generate audio'}`, 'error');
+                }
+            } catch (error) {
+                showAudioStatus(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🎙️ Generate Audio';
+            }
+            
+            function showAudioStatus(message, type) {
+                statusDiv.textContent = message;
+                statusDiv.style.display = 'block';
+                statusDiv.style.background = type === 'error' ? '#ffebee' : 
+                                             type === 'success' ? '#e8f5e9' : '#e3f2fd';
+                statusDiv.style.color = type === 'error' ? '#c62828' : 
+                                        type === 'success' ? '#2e7d32' : '#1565c0';
             }
         }
         

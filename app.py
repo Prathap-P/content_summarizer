@@ -754,5 +754,74 @@ def clear_conversation():
 
     return jsonify({'success': True, 'message': 'Conversation cleared'})
 
+@app.route('/text_to_audio', methods=['POST'])
+def text_to_audio():
+    """Convert text to audio file"""
+    try:
+        data = request.get_json()
+        text = data.get('text', '').strip()
+        
+        if not text:
+            return jsonify({
+                'success': False,
+                'error': 'Text is required'
+            }), 400
+        
+        print(f"[INFO] text_to_audio: Converting {len(text)} chars to audio")
+        
+        # For very large text, split into chunks
+        MAX_CHARS = 10000
+        
+        if len(text) > MAX_CHARS:
+            print(f"[WARNING] Text exceeds {MAX_CHARS} chars, splitting into chunks...")
+            sentences = text.replace('\n', ' ').split('. ')
+            chunks = []
+            current_chunk = ""
+            
+            for sentence in sentences:
+                if len(current_chunk) + len(sentence) < MAX_CHARS:
+                    current_chunk += sentence + ". "
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = sentence + ". "
+            
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            print(f"[INFO] Split into {len(chunks)} chunks")
+            
+            import numpy as np
+            audio_segments = []
+            
+            for idx, chunk in enumerate(chunks, 1):
+                print(f"[INFO] Processing chunk {idx}/{len(chunks)} ({len(chunk)} chars)...")
+                chunk_audio = generate_audio(chunk)
+                audio_segments.append(chunk_audio)
+            
+            audio = np.concatenate(audio_segments)
+            print(f"[SUCCESS] All chunks processed and concatenated")
+        else:
+            audio = generate_audio(text)
+        
+        audio_file_path = create_audio_file(audio)
+        audio_filename = os.path.basename(audio_file_path)
+        
+        print(f"[SUCCESS] Audio file created: {audio_filename}")
+        
+        return jsonify({
+            'success': True,
+            'audio_file': audio_filename,
+            'message': f'Audio generated successfully ({len(text)} chars)'
+        })
+        
+    except Exception as e:
+        error_msg = f"Text-to-audio conversion failed: {str(e)}"
+        print(f"[ERROR] {error_msg}")
+        return jsonify({
+            'success': False,
+            'error': error_msg
+        }), 500
+
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
