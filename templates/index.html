@@ -673,7 +673,7 @@
         
         // Auto-processor state
         let isProcessing = false;
-        let processingInterval = null;
+        let autoProcessorEnabled = true;
         
         // Initialize auto-processor on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -682,6 +682,14 @@
             
             // Save queue when user edits it
             document.getElementById('queueList').addEventListener('input', saveQueuesToStorage);
+            
+            // Handle page visibility changes to resume processing if tab becomes visible
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden && autoProcessorEnabled && !isProcessing) {
+                    console.log('[AUTO-PROCESSOR] Tab became visible, checking queue...');
+                    processNextLink();
+                }
+            });
         });
         
         // Load queues from localStorage
@@ -699,24 +707,22 @@
         
         // Save queues to localStorage
         function saveQueuesToStorage() {
-            localStorage.setItem('queueList', document.getElementById('queueList').value);
-            localStorage.setItem('processingList', document.getElementById('processingList').value);
-            localStorage.setItem('failedList', document.getElementById('failedList').value);
-            localStorage.setItem('finishedList', document.getElementById('finishedList').value);
-        }
-        
-        // Start the auto-processor
-        function startAutoProcessor() {
-            if (processingInterval) return; // Already running
-            
             console.log('[AUTO-PROCESSOR] Starting...');
-            processingInterval = setInterval(processNextLink, 2000); // Check every 2 seconds
+            autoProcessorEnabled = true;
+            processNextLink(); // Start processing immediately
         }
         
         // Process the next link in the queue
         async function processNextLink() {
+            if (!autoProcessorEnabled) {
+                console.log('[AUTO-PROCESSOR] Disabled, stopping...');
+                return;
+            }
+            
             if (isProcessing) {
-                console.log('[AUTO-PROCESSOR] Already processing, skipping...');
+                console.log('[AUTO-PROCESSOR] Already processing, will retry...');
+                // Retry after 2 seconds
+                setTimeout(processNextLink, 2000);
                 return;
             }
             
@@ -725,7 +731,9 @@
             
             // Check if processing list is empty
             if (processingListEl.value.trim()) {
-                console.log('[AUTO-PROCESSOR] Processing list not empty, skipping...');
+                console.log('[AUTO-PROCESSOR] Processing list not empty, waiting...');
+                // Retry after 2 seconds
+                setTimeout(processNextLink, 2000);
                 return;
             }
             
@@ -733,8 +741,11 @@
             const urls = queueListEl.value.split('\n').filter(line => line.trim());
             
             if (urls.length === 0) {
-                // Queue is empty, hide processing indicator
+                // Queue is empty, hide processing indicator and wait
                 document.getElementById('processingIndicator').innerHTML = '';
+                console.log('[AUTO-PROCESSOR] Queue empty, waiting for new items...');
+                // Check again in 5 seconds in case user adds more
+                setTimeout(processNextLink, 5000);
                 return;
             }
             
@@ -776,6 +787,18 @@
                 }
             } catch (error) {
                 // Network or other error - move to failed list
+                console.log(`[AUTO-PROCESSOR] ❌ Error: ${url} - ${error.message}`);
+                moveToFailed(url, error.message);
+            } finally {
+                // Clear processing list
+                processingListEl.value = '';
+                isProcessing = false;
+                document.getElementById('processingIndicator').innerHTML = '';
+                saveQueuesToStorage();
+                
+                // Process next item immediately (small delay to prevent tight loop)
+                console.log('[AUTO-PROCESSOR] Processing complete, checking for next item...');
+                setTimeout(processNextLink, 500error - move to failed list
                 console.log(`[AUTO-PROCESSOR] ❌ Error: ${url} - ${error.message}`);
                 moveToFailed(url, error.message);
             } finally {
