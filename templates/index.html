@@ -707,6 +707,14 @@
         
         // Save queues to localStorage
         function saveQueuesToStorage() {
+            localStorage.setItem('queueList', document.getElementById('queueList').value);
+            localStorage.setItem('processingList', document.getElementById('processingList').value);
+            localStorage.setItem('failedList', document.getElementById('failedList').value);
+            localStorage.setItem('finishedList', document.getElementById('finishedList').value);
+        }
+        
+        // Start the auto-processor
+        function startAutoProcessor() {
             console.log('[AUTO-PROCESSOR] Starting...');
             autoProcessorEnabled = true;
             processNextLink(); // Start processing immediately
@@ -798,15 +806,7 @@
                 
                 // Process next item immediately (small delay to prevent tight loop)
                 console.log('[AUTO-PROCESSOR] Processing complete, checking for next item...');
-                setTimeout(processNextLink, 500error - move to failed list
-                console.log(`[AUTO-PROCESSOR] ❌ Error: ${url} - ${error.message}`);
-                moveToFailed(url, error.message);
-            } finally {
-                // Clear processing list
-                processingListEl.value = '';
-                isProcessing = false;
-                document.getElementById('processingIndicator').innerHTML = '';
-                saveQueuesToStorage();
+                setTimeout(processNextLink, 500);
             }
         }
         
