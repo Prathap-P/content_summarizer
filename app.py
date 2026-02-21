@@ -2,6 +2,8 @@ import json
 
 from flask import Flask, render_template, request, jsonify, send_file, stream_with_context, Response
 import os
+import shutil
+from pathlib import Path
 
 from langchain.chains.conversation.base import ConversationChain
 from langchain_core.chat_history import InMemoryChatMessageHistory
@@ -23,7 +25,7 @@ from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
 from kokoro_tts import generate_audio, create_audio_file
 from llm_models import get_model
-from utils import remove_thinking_tokens, create_backup_file
+from utils import remove_thinking_tokens, create_backup_file, parse_backup_file, list_backup_files
 from email_sender import send_email_with_audio, send_email_with_attachments
 from telegram_sender import send_telegram_with_audio, send_telegram_with_attachments
 
@@ -376,6 +378,118 @@ def send_telegram():
             
     except Exception as e:
         print(f"[ERROR] send_telegram endpoint failed: {e}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/retry_failed_telegrams', methods=['POST'])
+def retry_failed_telegrams():
+    """Retry sending all failed Telegram messages from backup_content folder"""
+    print("[RETRY] Starting retry of failed Telegram messages...")
+    
+    # Get Telegram credentials
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    channel_id = os.getenv('TELEGRAM_CHANNEL_ID')
+    
+    if not bot_token or not chat_id:
+        return jsonify({
+            'error': 'Telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.',
+            'success': False
+        }), 500
+    
+    try:
+        # Create sent subfolder if it doesn't exist
+        sent_dir = Path('backup_content') / 'sent'
+        sent_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get all backup files
+        backup_files = list_backup_files()
+        
+        if not backup_files:
+            return jsonify({
+                'success': True,
+                'total': 0,
+                'sent': 0,
+                'skipped': 0,
+                'failed': 0,
+                'message': 'No backup files found'
+            })
+        
+        sent_count = 0
+        skipped_count = 0
+        failed_count = 0
+        skipped_files = []
+        failed_files = []
+        
+        # Process each backup file
+        for backup_file in backup_files:
+            try:
+                print(f"[RETRY] Processing {backup_file.name}...")
+                
+                # Parse backup file
+                backup_data = parse_backup_file(str(backup_file))
+                if not backup_data:
+                    print(f"[RETRY] Failed to parse {backup_file.name}, skipping")
+                    skipped_count += 1
+                    skipped_files.append(backup_file.name)
+                    continue
+                
+                # Check if audio file exists
+                audio_file_path = backup_data['audio_file_path']
+                if not os.path.exists(audio_file_path):
+                    print(f"[RETRY] Audio file not found: {audio_file_path}, skipping")
+                    skipped_count += 1
+                    skipped_files.append(f"{backup_file.name} (audio missing)")
+                    continue
+                
+                # Send to Telegram
+                url = backup_data['url']
+                content = backup_data['content']
+                message = f"📝 Condensed Content\n\n{content}"
+                
+                success = send_telegram_with_audio(
+                    chat_id=chat_id,
+                    message=message,
+                    audio_file_path=audio_file_path,
+                    bot_token=bot_token,
+                    source_url=url,
+                    channel_id=channel_id if channel_id else None
+                )
+                
+                if success:
+                    print(f"[RETRY] Successfully sent {backup_file.name}")
+                    sent_count += 1
+                    
+                    # Move backup file to sent subfolder
+                    dest_path = sent_dir / backup_file.name
+                    shutil.move(str(backup_file), str(dest_path))
+                    print(f"[RETRY] Moved {backup_file.name} to sent/")
+                else:
+                    print(f"[RETRY] Failed to send {backup_file.name}")
+                    failed_count += 1
+                    failed_files.append(backup_file.name)
+                    
+            except Exception as e:
+                print(f"[RETRY] Error processing {backup_file.name}: {e}")
+                failed_count += 1
+                failed_files.append(f"{backup_file.name} ({str(e)})")
+        
+        # Return summary
+        result = {
+            'success': True,
+            'total': len(backup_files),
+            'sent': sent_count,
+            'skipped': skipped_count,
+            'failed': failed_count,
+            'skipped_files': skipped_files,
+            'failed_files': failed_files
+        }
+        
+        print(f"[RETRY] Complete. Sent: {sent_count}, Skipped: {skipped_count}, Failed: {failed_count}")
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"[ERROR] retry_failed_telegrams endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
 
 

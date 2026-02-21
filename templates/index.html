@@ -665,6 +665,31 @@
         </div>
     </div>
     
+    <!-- Retry Failed Telegrams Button -->
+    <div class="retry-section" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
+        <button 
+            id="retryFailedBtn" 
+            class="btn btn-warning" 
+            onclick="retryFailedTelegrams()"
+            style="
+                padding: 15px 25px;
+                font-size: 16px;
+                font-weight: 600;
+                background: #ff9800;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
+                transition: all 0.3s ease;
+            "
+            onmouseover="this.style.background='#fb8c00'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(255, 152, 0, 0.4)'"
+            onmouseout="this.style.background='#ff9800'; this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(255, 152, 0, 0.3)'"
+        >
+            🔄 Retry Failed Telegrams
+        </button>
+    </div>
+    
     <script>
         let selectedFiles = [];
         let isLoading = false;
@@ -1344,6 +1369,64 @@
                     telegramBtn.disabled = false;
                     telegramBtn.textContent = '✈️ Send to Telegram';
                 }
+            }
+        }
+        
+        async function retryFailedTelegrams() {
+            const btn = document.getElementById('retryFailedBtn');
+            const originalText = btn.textContent;
+            
+            try {
+                // Disable button and show loading state
+                btn.disabled = true;
+                btn.textContent = '⏳ Retrying...';
+                btn.style.background = '#9e9e9e';
+                
+                console.log('[RETRY] Starting retry of failed telegrams...');
+                
+                const response = await fetch('/retry_failed_telegrams', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log('[RETRY] Result:', data);
+                    
+                    if (data.total === 0) {
+                        showStatus('No backup files found to retry', 'info');
+                    } else {
+                        // Build summary message
+                        const parts = [];
+                        if (data.sent > 0) parts.push(`✅ Sent: ${data.sent}`);
+                        if (data.skipped > 0) parts.push(`⏭️ Skipped: ${data.skipped}`);
+                        if (data.failed > 0) parts.push(`❌ Failed: ${data.failed}`);
+                        
+                        const summary = parts.join(', ');
+                        showStatus(`Retry complete - ${summary}`, data.failed > 0 ? 'error' : 'success');
+                        
+                        // Log details to console
+                        if (data.skipped_files.length > 0) {
+                            console.log('[RETRY] Skipped files:', data.skipped_files);
+                        }
+                        if (data.failed_files.length > 0) {
+                            console.log('[RETRY] Failed files:', data.failed_files);
+                        }
+                    }
+                } else {
+                    showStatus(data.error || 'Failed to retry telegrams', 'error');
+                }
+            } catch (error) {
+                console.error('[RETRY] Error:', error);
+                showStatus('Error: ' + error.message, 'error');
+            } finally {
+                // Re-enable button
+                btn.disabled = false;
+                btn.textContent = originalText;
+                btn.style.background = '#ff9800';
             }
         }
         

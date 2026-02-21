@@ -68,13 +68,35 @@ gpt_oss_20b_local_llm = ChatOpenAI(
     streaming=True,
 )
 
+mistral_local_llm = ChatOpenAI(
+    base_url="http://localhost:1234/v1",   # keep if using LM Studio OpenAI server
+    api_key="test",
+    temperature=0.7,
+    model="mlx-community/Mistral-7B-Instruct-v0.3-4bit",
+    top_p=0.85,
+    max_completion_tokens=15000,
+    model_kwargs={
+        "frequency_penalty": 1,
+        "presence_penalty": 0.5,
+    },
+    extra_body={
+        "min_p": 0.05,
+        "repeat_penalty": 1.1
+    },
+    streaming=True,
+    stream_usage=True,
+    timeout=3600
+)
+
+
 models_collection = {
     "groq_llm": groq_llm,
     "gemma_local_llm": gemma_local_llm,
     "nemotron_local_llm": nemotron_local_llm,
     "nemotron_stream_local_llm": nemotron_stream_local_llm,
     "deepseekR1_local_llm": deepseekR1_local_llm,
-    "gpt-oss_20b_local_llm": gpt_oss_20b_local_llm
+    "gpt-oss_20b_local_llm": gpt_oss_20b_local_llm,
+    "mistral_local_llm": mistral_local_llm
 }
 
 def get_model(model_name):

@@ -2,6 +2,7 @@ import re
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 
 def remove_thinking_tokens(text: str) -> tuple[str, bool]:
@@ -88,3 +89,72 @@ def create_backup_file(url: str, content: str, audio_file_path: str) -> str:
     
     print(f"[BACKUP] Created backup file: {backup_path}")
     return str(backup_path)
+
+
+def parse_backup_file(file_path: str) -> Optional[dict]:
+    """
+    Parse a backup file to extract URL, content, and audio file path.
+    
+    Args:
+        file_path: Path to the backup file
+        
+    Returns:
+        Dictionary with 'url', 'content', 'audio_file_path', 'timestamp', or None if parsing fails
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Extract URL (first line format: "Source URL: <url>")
+        url_match = re.search(r'^Source URL:\s*(.+)$', content, re.MULTILINE)
+        if not url_match:
+            print(f"[BACKUP PARSE] Failed to find URL in {file_path}")
+            return None
+        url = url_match.group(1).strip()
+        
+        # Extract timestamp
+        timestamp_match = re.search(r'^Backup Created:\s*(.+)$', content, re.MULTILINE)
+        timestamp = timestamp_match.group(1).strip() if timestamp_match else ""
+        
+        # Extract audio file path (last line format: "Audio File Path: <path>")
+        audio_match = re.search(r'^Audio File Path:\s*(.+)$', content, re.MULTILINE)
+        if not audio_match:
+            print(f"[BACKUP PARSE] Failed to find audio path in {file_path}")
+            return None
+        audio_file_path = audio_match.group(1).strip()
+        
+        # Extract main content (between the separator lines)
+        # Format: ========\n\n<content>\n\n========
+        content_match = re.search(r'={80}\n\n(.*?)\n\n={80}', content, re.DOTALL)
+        if not content_match:
+            print(f"[BACKUP PARSE] Failed to find content in {file_path}")
+            return None
+        main_content = content_match.group(1).strip()
+        
+        return {
+            'url': url,
+            'content': main_content,
+            'audio_file_path': audio_file_path,
+            'timestamp': timestamp,
+            'backup_file': file_path
+        }
+    except Exception as e:
+        print(f"[BACKUP PARSE] Error parsing {file_path}: {e}")
+        return None
+
+
+def list_backup_files() -> List[Path]:
+    """
+    List all backup files in the backup_content directory.
+    
+    Returns:
+        List of Path objects for .txt files in backup_content/
+    """
+    backup_dir = Path("backup_content")
+    if not backup_dir.exists():
+        return []
+    
+    # Get all .txt files in backup_content/ (not in subdirectories)
+    backup_files = [f for f in backup_dir.glob("*.txt") if f.is_file()]
+    print(f"[BACKUP LIST] Found {len(backup_files)} backup files")
+    return backup_files
