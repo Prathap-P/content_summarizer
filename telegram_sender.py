@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def get_discussion_group_id(channel_id: str, bot_token: str) -> Optional[str]:
             chat_info = response.json()
             if 'result' in chat_info and 'linked_chat_id' in chat_info['result']:
                 linked_id = chat_info['result']['linked_chat_id']
-                print(f"[INFO] Found linked discussion group: {linked_id}")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Found linked discussion group: {linked_id}")
                 return str(linked_id)
             else:
                 print(f"[WARNING] Channel {channel_id} has no linked discussion group")
@@ -150,7 +151,7 @@ def send_telegram_with_audio(
     
     # Check file size and compress if needed
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
-    print(f"[INFO] Audio file size: {file_size_mb:.2f} MB")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Audio file size: {file_size_mb:.2f} MB")
     
     compressed_file = None
     if file_size_mb > TELEGRAM_MAX_FILE_SIZE_MB:
@@ -160,7 +161,7 @@ def send_telegram_with_audio(
             print(f"[ERROR] Compression not available. Cannot send file >50MB")
             return False
         
-        print(f"[INFO] Attempting to compress audio...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Attempting to compress audio...")
         compressed_file = compress_audio(str(audio_path), bitrate="64k")
         
         if not compressed_file:
@@ -171,7 +172,7 @@ def send_telegram_with_audio(
         compressed_size_mb = Path(compressed_file).stat().st_size / (1024 * 1024)
         if compressed_size_mb > TELEGRAM_MAX_FILE_SIZE_MB:
             print(f"[WARNING] Compressed file still too large ({compressed_size_mb:.2f}MB)")
-            print(f"[INFO] Trying higher compression (32k bitrate)...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Trying higher compression (32k bitrate)...")
             
             # Try with lower bitrate
             os.remove(compressed_file)  # Remove previous attempt
@@ -200,14 +201,14 @@ def send_telegram_with_audio(
         
         # If channel_id provided, use channel + discussion group workflow
         if channel_id:
-            print(f"[INFO] Using channel mode: post to channel {channel_id}, reply in group {chat_id}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Using channel mode: post to channel {channel_id}, reply in group {chat_id}")
             
             # Step 1: Send URL link to CHANNEL (will auto-forward to discussion group)
             if not source_url:
                 print(f"[ERROR] source_url is required for channel mode")
                 return False
                 
-            print(f"[INFO] Sending source URL to channel {channel_id}...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending source URL to channel {channel_id}...")
             url_response = requests.post(text_url, data={
                 'chat_id': channel_id,
                 'text': f"🔗 Source: {source_url}"
@@ -222,18 +223,18 @@ def send_telegram_with_audio(
             print(f"[SUCCESS] Source URL posted to channel, message_id: {channel_message_id}")
             
             # Step 2: Wait for auto-forward to discussion group
-            print(f"[INFO] Waiting 3 seconds for auto-forward to discussion group...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Waiting 3 seconds for auto-forward to discussion group...")
             time.sleep(3)
             
             # Step 3: Find the forwarded message in discussion group using getUpdates
-            print(f"[INFO] Looking for forwarded message in discussion group {chat_id}...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Looking for forwarded message in discussion group {chat_id}...")
             get_updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
             
             discussion_message_id = None
             max_attempts = 3
             
             for attempt in range(1, max_attempts + 1):
-                print(f"[INFO] Attempt {attempt}/{max_attempts}...")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt}/{max_attempts}...")
                 
                 updates_response = requests.get(get_updates_url, params={'limit': 100}, timeout=10)
                 
@@ -259,15 +260,15 @@ def send_telegram_with_audio(
                     break
                 
                 if attempt < max_attempts:
-                    print(f"[INFO] Not found yet, waiting 2 more seconds...")
+                    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Not found yet, waiting 2 more seconds...")
                     time.sleep(2)
             
             if not discussion_message_id:
                 print(f"[WARNING] Could not find forwarded message after {max_attempts} attempts")
-                print(f"[INFO] Sending audio and text without threading")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending audio and text without threading")
             
             # Step 4: Send audio file to discussion group as reply
-            print(f"[INFO] Sending audio to discussion group {chat_id}...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending audio to discussion group {chat_id}...")
             
             with open(audio_file_path, 'rb') as audio_file:
                 files = {'audio': (audio_path.name, audio_file, 'audio/wav')}
@@ -292,10 +293,10 @@ def send_telegram_with_audio(
             for idx, chunk in enumerate(message_chunks, 1):
                 print(f"[DEBUG] Chunk {idx} length: {len(chunk)} chars")
             
-            print(f"[INFO] Sending text content to discussion group ({len(message_chunks)} part(s))...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending text content to discussion group ({len(message_chunks)} part(s))...")
             
             for i, chunk in enumerate(message_chunks, 1):
-                print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending message part {i}/{len(message_chunks)}...")
                 
                 data = {
                     'chat_id': chat_id,
@@ -315,11 +316,11 @@ def send_telegram_with_audio(
             
         else:
             # No channel mode - use old behavior
-            print(f"[INFO] Using direct chat mode: sending to {chat_id}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Using direct chat mode: sending to {chat_id}")
             
             # Step 1: Send URL link if provided
             if source_url:
-                print(f"[INFO] Sending source URL to chat {chat_id}...")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending source URL to chat {chat_id}...")
                 url_response = requests.post(text_url, data={
                     'chat_id': chat_id,
                     'text': f"🔗 Source: {source_url}"
@@ -332,7 +333,7 @@ def send_telegram_with_audio(
                 print(f"[SUCCESS] Source URL sent")
         
             # Step 2: Send audio file to chat_id
-            print(f"[INFO] Sending audio file to {chat_id}: {audio_path.name}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending audio file to {chat_id}: {audio_path.name}")
             
             with open(audio_file_path, 'rb') as audio_file:
                 files = {'audio': (audio_path.name, audio_file, 'audio/wav')}
@@ -354,11 +355,11 @@ def send_telegram_with_audio(
             for idx, chunk in enumerate(message_chunks, 1):
                 print(f"[DEBUG] Chunk {idx} length: {len(chunk)} chars")
             
-            print(f"[INFO] Sending text content to {chat_id} ({len(message_chunks)} part(s))...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending text content to {chat_id} ({len(message_chunks)} part(s))...")
             
             # Send all message chunks in order
             for i, chunk in enumerate(message_chunks, 1):
-                print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending message part {i}/{len(message_chunks)}...")
                 text_response = requests.post(text_url, data={
                     'chat_id': chat_id,
                     'text': chunk
@@ -450,11 +451,11 @@ def send_telegram_with_attachments(
         # Split message if needed
         message_chunks = split_message(message)
         
-        print(f"[INFO] Sending message to Telegram chat {chat_id} ({len(message_chunks)} part(s))...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending message to Telegram chat {chat_id} ({len(message_chunks)} part(s))...")
         
         # Send all message chunks
         for i, chunk in enumerate(message_chunks, 1):
-            print(f"[INFO] Sending message part {i}/{len(message_chunks)}...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending message part {i}/{len(message_chunks)}...")
             text_response = requests.post(text_url, data={
                 'chat_id': chat_id,
                 'text': chunk
@@ -481,7 +482,7 @@ def send_telegram_with_attachments(
                     print(f"[WARNING] File too large (>50MB), skipping: {file_name}")
                     continue
                 
-                print(f"[INFO] Sending file: {file_name} ({file_size / 1024:.2f} KB)")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending file: {file_name} ({file_size / 1024:.2f} KB)")
                 
                 # Determine endpoint based on file type
                 file_ext = file_path.lower()

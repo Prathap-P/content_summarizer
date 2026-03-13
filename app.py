@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from flask import Flask, render_template, request, jsonify, send_file, stream_with_context, Response
 import os
@@ -37,7 +38,7 @@ window_memory_100 = ConversationBufferWindowMemory(k=100)
 conversation_chain = None
 current_mode = None
 session_history = InMemoryChatMessageHistory()
-current_model = get_model("nexveridian_qwen_stream_local_llm")
+current_model = get_model("mlx_community_qwen_stream_local_llm")
 
 def check_llm_server():
     """Check if the local LLM server is running"""
@@ -76,7 +77,7 @@ def create_conversation_chain(mode):
 
 def create_runnable_chain(mode):
     """Create a runnable chain with mode-specific system prompt"""
-    print(f"[INFO] Creating runnable chain for mode: {mode}")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Creating runnable chain for mode: {mode}")
     if mode == "news":
         system_message = news_explainer_system_message
     elif mode == "youtube":
@@ -114,12 +115,17 @@ def load_content():
     url = data.get('url')
     mode = data.get('mode', 'news')  # 'news' or 'youtube'
     auto_send_telegram = data.get('auto_send_telegram', False)  # Only true for auto-processor
+    category = data.get('category', 'tech')  # 'tech', 'social', or 'science'
 
     if not url:
         return jsonify({'error': 'URL is required'}), 400
 
     if mode not in ['news', 'youtube']:
         return jsonify({'error': 'Invalid mode. Use "news" or "youtube"'}), 400
+    
+    if category not in ['tech', 'social', 'science']:
+        print(f"[WARNING] Invalid category '{category}', defaulting to 'tech'")
+        category = 'tech'
 
     try:
         # Initialize conversation chain for the selected mode
@@ -128,7 +134,7 @@ def load_content():
 
         # Step 1: Fetch raw content
         if mode == 'news':
-            print(f"[INFO] Loading news article from: {url}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Loading news article from: {url}")
             documents = read_website_content(url)
             if not documents:
                 print(f"[ERROR] Failed to load article from: {url}")
@@ -138,7 +144,7 @@ def load_content():
             print(f"[SUCCESS] Article loaded successfully. Length: {len(raw_content)} characters")
 
         elif mode == 'youtube':
-            print(f"[INFO] Fetching YouTube transcript from: {url}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Fetching YouTube transcript from: {url}")
             raw_content = get_youtube_transcript(url)
 
             # Check if transcript fetch failed
@@ -152,7 +158,7 @@ def load_content():
             print(f"[SUCCESS] YouTube transcript fetched successfully. Length: {len(raw_content)} characters")
 
         # Step 2: Condense content using condenser_service (no model conversation yet)
-        print(f"[INFO] Condensing content using condenser service...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensing content using condenser service...")
         condensed_content = condense_content(raw_content, current_model)
         print(f"[SUCCESS] Content condensed. Original: {len(raw_content)} chars -> Condensed: {len(condensed_content)} chars")
 
@@ -163,7 +169,7 @@ def load_content():
         # Step 3: Generate audio for condensed content
         audio_file = None
         audio_file_path = None
-        print(f"[INFO] Generating audio for condensed content ({len(condensed_content)} chars)...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for condensed content ({len(condensed_content)} chars)...")
         audio_start_time = time.time()
         
         try:
@@ -184,11 +190,35 @@ def load_content():
         
         # Step 4: Send to Telegram only if auto_send_telegram is True
         if auto_send_telegram:
-            print(f"[INFO] Auto-sending to Telegram...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Auto-sending to Telegram (category: {category})...")
             try:
-                chat_id = os.getenv('TELEGRAM_CHAT_ID')
                 bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-                channel_id = os.getenv('TELEGRAM_CHANNEL_ID')  # Optional channel for posting
+                
+                # Map category to channel ID
+                channel_map = {
+                    'tech': os.getenv('TELEGRAM_CHANNEL_TECH'),
+                    'social': os.getenv('TELEGRAM_CHANNEL_SOCIAL'),
+                    'science': os.getenv('TELEGRAM_CHANNEL_SCIENCE')
+                }
+                
+                # Map category to discussion group (chat_id)
+                chat_map = {
+                    'tech': os.getenv('TELEGRAM_CHAT_ID_TECH') or os.getenv('TELEGRAM_CHAT_ID'),  # Backward compatibility
+                    'social': os.getenv('TELEGRAM_CHAT_ID_SOCIAL'),
+                    'science': os.getenv('TELEGRAM_CHAT_ID_SCIENCE')
+                }
+                
+                # Get channel for this category, fallback to old TELEGRAM_CHANNEL_ID if specific not set
+                channel_id = channel_map.get(category)
+                if not channel_id:
+                    channel_id = os.getenv('TELEGRAM_CHANNEL_ID')  # Backward compatibility
+                    print(f"[WARNING] TELEGRAM_CHANNEL_{category.upper()} not set, using TELEGRAM_CHANNEL_ID")
+                
+                # Get discussion group for this category
+                chat_id = chat_map.get(category)
+                if not chat_id:
+                    print(f"[ERROR] TELEGRAM_CHAT_ID_{category.upper()} not set")
+                    return jsonify({'error': f'Discussion group for {category} not configured', 'success': False}), 422
                 
                 if not chat_id or not bot_token:
                     error_msg = "Telegram credentials not configured (TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN required)"
@@ -203,6 +233,7 @@ def load_content():
                 content_type = 'Article' if mode == 'news' else 'YouTube Video'
                 message = f"📝 Condensed {content_type}\n\n{condensed_content}"
                 
+                print(f"[TELEGRAM] Sending to channel: {channel_id}, discussion group: {chat_id}")
                 telegram_success = send_telegram_with_audio(
                     chat_id=chat_id,
                     message=message,
@@ -217,7 +248,7 @@ def load_content():
                     print(f"[ERROR] {error_msg}")
                     # Create backup file
                     try:
-                        backup_path = create_backup_file(url, condensed_content, audio_file_path)
+                        backup_path = create_backup_file(url, condensed_content, audio_file_path, category)
                         error_msg = f"Failed to send to Telegram. Backup created at: {backup_path}"
                         print(f"[BACKUP] {error_msg}")
                     except Exception as backup_error:
@@ -230,7 +261,7 @@ def load_content():
                 print(f"[ERROR] {error_msg}")
                 # Create backup file
                 try:
-                    backup_path = create_backup_file(url, condensed_content, audio_file_path)
+                    backup_path = create_backup_file(url, condensed_content, audio_file_path, category)
                     error_msg = f"Telegram error: {e}. Backup created at: {backup_path}"
                     print(f"[BACKUP] {error_msg}")
                 except Exception as backup_error:
@@ -241,7 +272,7 @@ def load_content():
         # The memory now contains: system prompt (from create_runnable_chain) + condensed input
         session_history.add_user_message(f"Here is the condensed {'article' if mode == 'news' else 'video transcript'} content (Original: {raw_word_count} words, Condensed: {condensed_word_count} words):\n\n{condensed_content}")
         session_history.add_ai_message(f"I have received and processed the condensed content. I'm ready to answer your questions about it.")
-        print(f"[INFO] Condensed content added to memory. Ready for Q&A.")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensed content added to memory. Ready for Q&A.")
 
         # Return success only if everything succeeded
         return jsonify({
@@ -300,7 +331,7 @@ def send_email():
         url_section = f"\n\nSource URL: {url}\n" if url else ""
         body_text = f"Here is the condensed {content_type.lower()}:{url_section}\n\n{body_content}\n\nPlease find the audio file attached."
         
-        print(f"[INFO] Sending email to {recipient_email}...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending email to {recipient_email}...")
         success = send_email_with_audio(
             recipient_email=recipient_email,
             subject=subject,
@@ -358,7 +389,7 @@ def send_telegram():
         # Don't include URL in message since it will be sent separately
         message = f"📝 Condensed {content_type}\n\n{content}"
         
-        print(f"[INFO] Sending to Telegram chat {chat_id}...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending to Telegram chat {chat_id}...")
         print(f"[DEBUG] Message length: {len(message)} characters")
         success = send_telegram_with_audio(
             chat_id=chat_id,
@@ -388,14 +419,26 @@ def retry_failed_telegrams():
     
     # Get Telegram credentials
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv('TELEGRAM_CHAT_ID')
-    channel_id = os.getenv('TELEGRAM_CHANNEL_ID')
     
-    if not bot_token or not chat_id:
+    if not bot_token:
         return jsonify({
-            'error': 'Telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.',
+            'error': 'Telegram not configured. Set TELEGRAM_BOT_TOKEN environment variable.',
             'success': False
         }), 500
+    
+    # Create channel map for category-specific channels
+    channel_map = {
+        'tech': os.getenv('TELEGRAM_CHANNEL_TECH'),
+        'social': os.getenv('TELEGRAM_CHANNEL_SOCIAL'),
+        'science': os.getenv('TELEGRAM_CHANNEL_SCIENCE')
+    }
+    
+    # Create chat map for category-specific discussion groups
+    chat_map = {
+        'tech': os.getenv('TELEGRAM_CHAT_ID_TECH') or os.getenv('TELEGRAM_CHAT_ID'),  # Backward compatibility
+        'social': os.getenv('TELEGRAM_CHAT_ID_SOCIAL'),
+        'science': os.getenv('TELEGRAM_CHAT_ID_SCIENCE')
+    }
     
     try:
         # Create sent subfolder if it doesn't exist
@@ -442,11 +485,29 @@ def retry_failed_telegrams():
                     skipped_files.append(f"{backup_file.name} (audio missing)")
                     continue
                 
+                # Get category from backup data (defaults to 'tech' for old backups)
+                category = backup_data.get('category', 'tech')
+                
+                # Get channel for this category
+                channel_id = channel_map.get(category)
+                if not channel_id:
+                    channel_id = os.getenv('TELEGRAM_CHANNEL_ID')  # Backward compatibility
+                    print(f"[RETRY] TELEGRAM_CHANNEL_{category.upper()} not set, using TELEGRAM_CHANNEL_ID")
+                
+                # Get discussion group for this category
+                chat_id = chat_map.get(category)
+                if not chat_id:
+                    print(f"[RETRY] TELEGRAM_CHAT_ID_{category.upper()} not set, skipping {backup_file.name}")
+                    skipped_count += 1
+                    skipped_files.append(f"{backup_file.name} (chat_id missing)")
+                    continue
+                
                 # Send to Telegram
                 url = backup_data['url']
                 content = backup_data['content']
                 message = f"📝 Condensed Content\n\n{content}"
                 
+                print(f"[RETRY] Sending to channel: {channel_id}, discussion group: {chat_id}, category: {category}")
                 success = send_telegram_with_audio(
                     chat_id=chat_id,
                     message=message,
@@ -520,12 +581,12 @@ def send_quick_email():
                 file_path = os.path.join(temp_dir, file.filename)
                 file.save(file_path)
                 attachment_paths.append(file_path)
-                print(f"[INFO] Saved temporary attachment: {file.filename}")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Saved temporary attachment: {file.filename}")
         
         # Send email
         subject = 'Quick Message from Content Analyzer'
         
-        print(f"[INFO] Sending quick email to {recipient_email}...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending quick email to {recipient_email}...")
         success = send_email_with_attachments(
             recipient_email=recipient_email,
             subject=subject,
@@ -537,7 +598,7 @@ def send_quick_email():
         for file_path in attachment_paths:
             try:
                 os.remove(file_path)
-                print(f"[INFO] Cleaned up temporary file: {file_path}")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Cleaned up temporary file: {file_path}")
             except Exception as e:
                 print(f"[WARNING] Failed to remove temp file {file_path}: {e}")
         
@@ -591,10 +652,10 @@ def send_quick_telegram():
                 file_path = os.path.join(temp_dir, file.filename)
                 file.save(file_path)
                 attachment_paths.append(file_path)
-                print(f"[INFO] Saved temporary attachment: {file.filename}")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Saved temporary attachment: {file.filename}")
         
         # Send Telegram message
-        print(f"[INFO] Sending quick Telegram message to {chat_id}...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending quick Telegram message to {chat_id}...")
         success = send_telegram_with_attachments(
             chat_id=chat_id,
             message=message,
@@ -606,7 +667,7 @@ def send_quick_telegram():
         for file_path in attachment_paths:
             try:
                 os.remove(file_path)
-                print(f"[INFO] Cleaned up temporary file: {file_path}")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Cleaned up temporary file: {file_path}")
             except Exception as e:
                 print(f"[WARNING] Failed to remove temp file {file_path}: {e}")
         
@@ -640,7 +701,7 @@ def chat():
 
     try:
         # Get response from conversation chain
-        print(f"[INFO] Generating LLM response for: '{user_input[:50]}...'")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating LLM response for: '{user_input[:50]}...'")
         
         # Track token usage with callback and time
         import time
@@ -689,7 +750,7 @@ def chat():
         # Generate audio if requested
         if generate_audio_flag:
             try:
-                print(f"[INFO] Generating audio for response ({len(response_text)} chars)...")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for response ({len(response_text)} chars)...")
                 audio_start_time = time.time()
                 
                 audio = generate_audio(response_text)
@@ -718,7 +779,7 @@ def chat():
 @app.route('/streamChat', methods=['POST'])
 def stream_chat():
     """Handle follow-up questions with streaming"""
-    print("[INFO] streamChat endpoint called")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] streamChat endpoint called")
     # Check if LLM server is accessible first
     if not check_llm_server():
         print("[ERROR] LLM server not accessible")
@@ -729,7 +790,7 @@ def stream_chat():
     data = request.json
     user_input = data.get('message')
     generate_audio_flag = data.get('generate_audio', False)
-    print(f"[INFO] User input: '{user_input[:50]}...' | Audio: {generate_audio_flag}")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] User input: '{user_input[:50]}...' | Audio: {generate_audio_flag}")
 
     if not user_input:
         return jsonify({'error': 'Message is required'}), 400
@@ -748,7 +809,7 @@ def stream_chat():
             total_chunk_size = 0
             complete_response_text = ""
 
-            print(f"[INFO] Generating streaming LLM response for: '{user_input[:50]}...'")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating streaming LLM response for: '{user_input[:50]}...'")
 
             with get_openai_callback() as cb:
                 chunk_received = False
@@ -776,7 +837,7 @@ def stream_chat():
                 }
 
             llm_time = time.time() - llm_start_time
-            print(f"[INFO] Streaming complete. Time: {llm_time:.2f}s, Chunks: {total_chunk_size} chars")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Streaming complete. Time: {llm_time:.2f}s, Chunks: {total_chunk_size} chars")
 
             # Remove thinking tokens from complete response
             complete_response_text, thinking_tokens_removed = remove_thinking_tokens(complete_response_text)
@@ -800,7 +861,7 @@ def stream_chat():
             # Generate audio if requested
             if generate_audio_flag:
                 try:
-                    print(f"[INFO] Generating audio for response ({len(complete_response_text)} chars)...")
+                    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for response ({len(complete_response_text)} chars)...")
                     audio_start_time = time.time()
 
                     audio = generate_audio(complete_response_text)
@@ -840,7 +901,7 @@ def stream_chat():
 @app.route('/audio/<filename>', methods=['GET'])
 def get_audio(filename):
     """Serve a specific audio file"""
-    print(f"[INFO] Audio file requested: {filename}")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Audio file requested: {filename}")
     audio_dir = 'kokoro_outputs'
     file_path = os.path.join(audio_dir, filename)
 
@@ -855,7 +916,7 @@ def get_audio(filename):
 @app.route('/clear_conversation', methods=['POST'])
 def clear_conversation():
     """Clear conversation memory and reset mode"""
-    print("[INFO] Clearing conversation memory")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Clearing conversation memory")
     global conversation_chain, current_mode
     
     if session_history:
@@ -864,7 +925,7 @@ def clear_conversation():
     
     conversation_chain = None
     current_mode = None
-    print("[INFO] Conversation state reset")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Conversation state reset")
 
     return jsonify({'success': True, 'message': 'Conversation cleared'})
 
@@ -881,7 +942,7 @@ def text_to_audio():
                 'error': 'Text is required'
             }), 400
         
-        print(f"[INFO] text_to_audio: Converting {len(text)} chars to audio")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] text_to_audio: Converting {len(text)} chars to audio")
         print(f"[DEBUG] Text preview: {text[:100]}...")
         
         # For very large text, split into chunks
@@ -904,13 +965,13 @@ def text_to_audio():
             if current_chunk:
                 chunks.append(current_chunk.strip())
             
-            print(f"[INFO] Split into {len(chunks)} chunks")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Split into {len(chunks)} chunks")
             
             import numpy as np
             audio_segments = []
             
             for idx, chunk in enumerate(chunks, 1):
-                print(f"[INFO] Processing chunk {idx}/{len(chunks)} ({len(chunk)} chars)...")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Processing chunk {idx}/{len(chunks)} ({len(chunk)} chars)...")
                 chunk_audio = generate_audio(chunk)
                 print(f"[DEBUG] Chunk {idx} audio shape: {chunk_audio.shape}")
                 audio_segments.append(chunk_audio)
@@ -918,7 +979,7 @@ def text_to_audio():
             audio = np.concatenate(audio_segments)
             print(f"[SUCCESS] All chunks processed and concatenated: {audio.shape}")
         else:
-            print(f"[INFO] Generating audio directly (text < {MAX_CHARS} chars)")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio directly (text < {MAX_CHARS} chars)")
             audio = generate_audio(text)
             import numpy as np
             print(f"[DEBUG] Generated audio shape: {audio.shape}, sum: {np.sum(np.abs(audio))}")

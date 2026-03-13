@@ -56,14 +56,34 @@ nexveridian_qwen_stream_local_llm = ChatOpenAI(
     api_key="test",
     temperature=0.7,
     model="nexveridian/qwen3.5-35b-a3b",
-    top_p=0.9,
-    max_completion_tokens=15000,
+    top_p=0.85,
+    max_completion_tokens=20000,
     model_kwargs={
         "frequency_penalty": 0.8,
         "presence_penalty": 0.6,
     },
     extra_body={
         "min_p": 0.05,
+        "repeat_penalty": 1.15
+    },
+    streaming=True,
+    stream_usage=True,
+    timeout=3600
+)
+
+mlx_community_qwen_stream_local_llm = ChatOpenAI(
+    base_url="http://localhost:1234/v1",
+    api_key="test",
+    temperature=0.7,
+    model="mlx-community/qwen3.5-35b-a3b",
+    top_p=0.9,
+    max_completion_tokens=15000,
+    model_kwargs={
+        "frequency_penalty": 0.3,
+        "presence_penalty": 0.2,
+    },
+    extra_body={
+        "min_p": 0,
         "repeat_penalty": 1.15
     },
     streaming=True,
@@ -115,6 +135,7 @@ models_collection = {
     "nemotron_local_llm": nemotron_local_llm,
     "nemotron_stream_local_llm": nemotron_stream_local_llm,
     "nexveridian_qwen_stream_local_llm": nexveridian_qwen_stream_local_llm,
+    "mlx_community_qwen_stream_local_llm": mlx_community_qwen_stream_local_llm,
     "deepseekR1_local_llm": deepseekR1_local_llm,
     "gpt-oss_20b_local_llm": gpt_oss_20b_local_llm,
     "mistral_local_llm": mistral_local_llm

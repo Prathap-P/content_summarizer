@@ -1,5 +1,6 @@
 import smtplib
 import os
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.audio import MIMEAudio
@@ -72,7 +73,7 @@ def send_email_with_audio(
         msg.attach(MIMEText(body_text, 'plain'))
         
         # Attach audio file
-        print(f"[INFO] Attaching audio file: {audio_path.name}")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Attaching audio file: {audio_path.name}")
         with open(audio_file_path, 'rb') as audio_file:
             audio_data = audio_file.read()
             audio_attachment = MIMEAudio(audio_data, 'wav')
@@ -83,12 +84,12 @@ def send_email_with_audio(
             msg.attach(audio_attachment)
         
         # Connect to Gmail SMTP server using SSL (port 465)
-        print(f"[INFO] Connecting to Gmail SMTP server (SSL)...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Connecting to Gmail SMTP server (SSL)...")
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            print(f"[INFO] Logging in as {sender_email}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Logging in as {sender_email}")
             server.login(sender_email, app_password)
             
-            print(f"[INFO] Sending email to {recipient_email}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending email to {recipient_email}")
             server.send_message(msg)
             
         print(f"[SUCCESS] Email sent successfully to {recipient_email}")
@@ -96,8 +97,8 @@ def send_email_with_audio(
         
     except smtplib.SMTPAuthenticationError:
         print("[ERROR] Authentication failed. Check your email and app password")
-        print("[INFO] Make sure you're using an App Password, not your regular Gmail password")
-        print("[INFO] Generate App Password at: https://myaccount.google.com/apppasswords")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Make sure you're using an App Password, not your regular Gmail password")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generate App Password at: https://myaccount.google.com/apppasswords")
         return False
         
     except smtplib.SMTPException as e:
@@ -169,7 +170,7 @@ def send_email_with_attachments(
                     continue
                 
                 file_name = os.path.basename(file_path)
-                print(f"[INFO] Attaching file: {file_name}")
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Attaching file: {file_name}")
                 
                 with open(file_path, 'rb') as f:
                     file_data = f.read()
@@ -189,12 +190,12 @@ def send_email_with_attachments(
                     msg.attach(attachment)
         
         # Connect to Gmail SMTP server using SSL (port 465)
-        print(f"[INFO] Connecting to Gmail SMTP server (SSL)...")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Connecting to Gmail SMTP server (SSL)...")
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            print(f"[INFO] Logging in as {sender_email}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Logging in as {sender_email}")
             server.login(sender_email, app_password)
             
-            print(f"[INFO] Sending email to {recipient_email}")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Sending email to {recipient_email}")
             server.send_message(msg)
             
         print(f"[SUCCESS] Email sent successfully to {recipient_email}")
@@ -202,8 +203,8 @@ def send_email_with_attachments(
         
     except smtplib.SMTPAuthenticationError:
         print("[ERROR] Authentication failed. Check your email and app password")
-        print("[INFO] Make sure you're using an App Password, not your regular Gmail password")
-        print("[INFO] Generate App Password at: https://myaccount.google.com/apppasswords")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Make sure you're using an App Password, not your regular Gmail password")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generate App Password at: https://myaccount.google.com/apppasswords")
         return False
         
     except smtplib.SMTPException as e:

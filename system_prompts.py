@@ -120,7 +120,7 @@ You are a Professional Narrative Scriptwriter. Your expertise is in "Lossless Na
 2. NARRATIVE VOICE: Use a single, authoritative narrator. Convert all speakers/dialogue into this unified voice.
 3. SILENT CORRECTION: Fix ASR/phonetic errors and remove all verbal disfluencies (ums, ahs, repetitions, filler phrases).
 4. ANTI-HALUCINATION: Do not add "Thank you," "I hope this helps," or any meta-commentary.
-5. LENGTH TARGET: Aim for 40% of the input length. If the input is low-signal, you may go lower, but never add filler to "pad" the length."""
+5. LENGTH TARGET: Aim for 40% of the input length. If the input is low-signal, you may go lower, if generated text is more that 40%, then thats also fine. 40% is not hard bound, but never add filler to "pad" the length."""
 
 map_reduce_custom_prompts = {
     "map_prompt": """# TASK: HIGH-DENSITY NARRATIVE MAPPING

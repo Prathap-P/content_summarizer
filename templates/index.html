@@ -285,40 +285,48 @@
             gap: 10px;
         }
         
+        .multi-queue-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
         .queue-panel {
-            width: 320px;
+            flex: 1;
             background: white;
             border-radius: 12px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            padding: 20px;
-            height: fit-content;
-            z-index: 1;
-            position: sticky;
-            top: 20px;
+            padding: 15px;
+            min-width: 280px;
+            max-width: 350px;
         }
 
         .queue-panel h3 {
             color: #667eea;
-            font-size: 16px;
-            margin-bottom: 10px;
+            font-size: 15px;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
+            text-align: center;
+            justify-content: center;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
         }
 
         .queue-section {
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         }
 
         .queue-section textarea {
             width: 100%;
-            padding: 10px;
+            padding: 8px;
             border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 12px;
+            border-radius: 6px;
+            font-size: 11px;
             font-family: 'Courier New', monospace;
             resize: vertical;
-            min-height: 120px;
+            min-height: 100px;
             transition: border-color 0.3s;
         }
 
@@ -333,13 +341,13 @@
         }
 
         .queue-section .label {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             color: #333;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
         }
 
         .status-indicator {
@@ -472,51 +480,125 @@
 </head>
 <body>
     <!-- Queue Panel (Left Side) -->
-    <div class="queue-panel">
-        <h3>⚡ Auto Processor</h3>
-        
-        <div class="queue-section">
-            <div class="label">
-                📋 Queue (Editable)
+    <div class="multi-queue-container">
+        <!-- Tech Queue Panel -->
+        <div class="queue-panel">
+            <h3>🔧 Tech</h3>
+            
+            <div class="queue-section">
+                <div class="label">📋 Queue</div>
+                <textarea 
+                    id="techQueueList" 
+                    placeholder="Tech URLs (one per line)"
+                ></textarea>
             </div>
-            <textarea 
-                id="queueList" 
-                placeholder="Paste URLs here (one per line)&#10;e.g.,&#10;https://youtube.com/watch?v=...&#10;https://example.com/article"
-            ></textarea>
+            
+            <div class="queue-section">
+                <div class="label">⚙️ Processing</div>
+                <textarea 
+                    id="techProcessingList" 
+                    readonly
+                    placeholder="Processing..."
+                ></textarea>
+            </div>
+            
+            <div class="queue-section">
+                <div class="label">❌ Failed</div>
+                <textarea 
+                    id="techFailedList" 
+                    readonly
+                    placeholder="Failed URLs"
+                ></textarea>
+            </div>
+            
+            <div class="queue-section">
+                <div class="label">✅ Finished</div>
+                <textarea 
+                    id="techFinishedList" 
+                    readonly
+                    placeholder="Completed URLs"
+                ></textarea>
+            </div>
         </div>
         
-        <div class="queue-section">
-            <div class="label">
-                <span id="processingIndicator"></span>
-                ⚙️ Processing
+        <!-- Social Queue Panel -->
+        <div class="queue-panel">
+            <h3>👥 Social</h3>
+            
+            <div class="queue-section">
+                <div class="label">📋 Queue</div>
+                <textarea 
+                    id="socialQueueList" 
+                    placeholder="Social URLs (one per line)"
+                ></textarea>
             </div>
-            <textarea 
-                id="processingList" 
-                readonly
-                placeholder="Currently processing URL will appear here"
-            ></textarea>
+            
+            <div class="queue-section">
+                <div class="label">⚙️ Processing</div>
+                <textarea 
+                    id="socialProcessingList" 
+                    readonly
+                    placeholder="Processing..."
+                ></textarea>
+            </div>
+            
+            <div class="queue-section">
+                <div class="label">❌ Failed</div>
+                <textarea 
+                    id="socialFailedList" 
+                    readonly
+                    placeholder="Failed URLs"
+                ></textarea>
+            </div>
+            
+            <div class="queue-section">
+                <div class="label">✅ Finished</div>
+                <textarea 
+                    id="socialFinishedList" 
+                    readonly
+                    placeholder="Completed URLs"
+                ></textarea>
+            </div>
         </div>
         
-        <div class="queue-section">
-            <div class="label">
-                ❌ Failed
+        <!-- Science Queue Panel -->
+        <div class="queue-panel">
+            <h3>🔬 Science</h3>
+            
+            <div class="queue-section">
+                <div class="label">📋 Queue</div>
+                <textarea 
+                    id="scienceQueueList" 
+                    placeholder="Science URLs (one per line)"
+                ></textarea>
             </div>
-            <textarea 
-                id="failedList" 
-                readonly
-                placeholder="Failed URLs will appear here"
-            ></textarea>
-        </div>
-        
-        <div class="queue-section">
-            <div class="label">
-                ✅ Finished
+            
+            <div class="queue-section">
+                <div class="label">⚙️ Processing</div>
+                <textarea 
+                    id="scienceProcessingList" 
+                    readonly
+                    placeholder="Processing..."
+                ></textarea>
             </div>
-            <textarea 
-                id="finishedList" 
-                readonly
-                placeholder="Successfully processed URLs will appear here"
-            ></textarea>
+            
+            <div class="queue-section">
+                <div class="label">❌ Failed</div>
+                <textarea 
+                    id="scienceFailedList" 
+                    readonly
+                    placeholder="Failed URLs"
+                ></textarea>
+            </div>
+            
+            <div class="queue-section">
+                <div class="label">✅ Finished</div>
+                <textarea 
+                    id="scienceFinishedList" 
+                    readonly
+                    placeholder="Completed URLs"
+                ></textarea>
+            </div>
         </div>
     </div>
 
@@ -705,8 +787,10 @@
             loadQueuesFromStorage();
             startAutoProcessor();
             
-            // Save queue when user edits it
-            document.getElementById('queueList').addEventListener('input', saveQueuesToStorage);
+            // Save queues when user edits them
+            document.getElementById('techQueueList').addEventListener('input', saveQueuesToStorage);
+            document.getElementById('socialQueueList').addEventListener('input', saveQueuesToStorage);
+            document.getElementById('scienceQueueList').addEventListener('input', saveQueuesToStorage);
             
             // Handle page visibility changes to resume processing if tab becomes visible
             document.addEventListener('visibilitychange', function() {
@@ -719,23 +803,60 @@
         
         // Load queues from localStorage
         function loadQueuesFromStorage() {
-            const queueList = localStorage.getItem('queueList') || '';
-            const processingList = localStorage.getItem('processingList') || '';
-            const failedList = localStorage.getItem('failedList') || '';
-            const finishedList = localStorage.getItem('finishedList') || '';
+            // Tech queue
+            const techQueue = localStorage.getItem('techQueue') || '';
+            const techProcessing = localStorage.getItem('techProcessing') || '';
+            const techFailed = localStorage.getItem('techFailed') || '';
+            const techFinished = localStorage.getItem('techFinished') || '';
             
-            document.getElementById('queueList').value = queueList;
-            document.getElementById('processingList').value = processingList;
-            document.getElementById('failedList').value = failedList;
-            document.getElementById('finishedList').value = finishedList;
+            // Social queue
+            const socialQueue = localStorage.getItem('socialQueue') || '';
+            const socialProcessing = localStorage.getItem('socialProcessing') || '';
+            const socialFailed = localStorage.getItem('socialFailed') || '';
+            const socialFinished = localStorage.getItem('socialFinished') || '';
+            
+            // Science queue
+            const scienceQueue = localStorage.getItem('scienceQueue') || '';
+            const scienceProcessing = localStorage.getItem('scienceProcessing') || '';
+            const scienceFailed = localStorage.getItem('scienceFailed') || '';
+            const scienceFinished = localStorage.getItem('scienceFinished') || '';
+            
+            // Set values
+            document.getElementById('techQueueList').value = techQueue;
+            document.getElementById('techProcessingList').value = techProcessing;
+            document.getElementById('techFailedList').value = techFailed;
+            document.getElementById('techFinishedList').value = techFinished;
+            
+            document.getElementById('socialQueueList').value = socialQueue;
+            document.getElementById('socialProcessingList').value = socialProcessing;
+            document.getElementById('socialFailedList').value = socialFailed;
+            document.getElementById('socialFinishedList').value = socialFinished;
+            
+            document.getElementById('scienceQueueList').value = scienceQueue;
+            document.getElementById('scienceProcessingList').value = scienceProcessing;
+            document.getElementById('scienceFailedList').value = scienceFailed;
+            document.getElementById('scienceFinishedList').value = scienceFinished;
         }
         
         // Save queues to localStorage
         function saveQueuesToStorage() {
-            localStorage.setItem('queueList', document.getElementById('queueList').value);
-            localStorage.setItem('processingList', document.getElementById('processingList').value);
-            localStorage.setItem('failedList', document.getElementById('failedList').value);
-            localStorage.setItem('finishedList', document.getElementById('finishedList').value);
+            // Tech queue
+            localStorage.setItem('techQueue', document.getElementById('techQueueList').value);
+            localStorage.setItem('techProcessing', document.getElementById('techProcessingList').value);
+            localStorage.setItem('techFailed', document.getElementById('techFailedList').value);
+            localStorage.setItem('techFinished', document.getElementById('techFinishedList').value);
+            
+            // Social queue
+            localStorage.setItem('socialQueue', document.getElementById('socialQueueList').value);
+            localStorage.setItem('socialProcessing', document.getElementById('socialProcessingList').value);
+            localStorage.setItem('socialFailed', document.getElementById('socialFailedList').value);
+            localStorage.setItem('socialFinished', document.getElementById('socialFinishedList').value);
+            
+            // Science queue
+            localStorage.setItem('scienceQueue', document.getElementById('scienceQueueList').value);
+            localStorage.setItem('scienceProcessing', document.getElementById('scienceProcessingList').value);
+            localStorage.setItem('scienceFailed', document.getElementById('scienceFailedList').value);
+            localStorage.setItem('scienceFinished', document.getElementById('scienceFinishedList').value);
         }
         
         // Start the auto-processor
@@ -743,6 +864,26 @@
             console.log('[AUTO-PROCESSOR] Starting...');
             autoProcessorEnabled = true;
             processNextLink(); // Start processing immediately
+        }
+        
+        // Get next URL from all queues (FIFO across all categories)
+        function getNextUrlFromAllQueues() {
+            const categories = ['tech', 'social', 'science'];
+            
+            for (const category of categories) {
+                const queueEl = document.getElementById(`${category}QueueList`);
+                const urls = queueEl.value.split('\n').filter(line => line.trim());
+                
+                if (urls.length > 0) {
+                    const url = urls[0].trim();
+                    // Remove from queue
+                    urls.shift();
+                    queueEl.value = urls.join('\n');
+                    return { url, category };
+                }
+            }
+            
+            return null; // No URLs in any queue
         }
         
         // Process the next link in the queue
@@ -759,41 +900,43 @@
                 return;
             }
             
-            const processingListEl = document.getElementById('processingList');
-            const queueListEl = document.getElementById('queueList');
+            // Check if any processing list has content
+            const categories = ['tech', 'social', 'science'];
+            let hasProcessing = false;
+            for (const category of categories) {
+                const processingEl = document.getElementById(`${category}ProcessingList`);
+                if (processingEl.value.trim()) {
+                    hasProcessing = true;
+                    break;
+                }
+            }
             
-            // Check if processing list is empty
-            if (processingListEl.value.trim()) {
+            if (hasProcessing) {
                 console.log('[AUTO-PROCESSOR] Processing list not empty, waiting...');
                 // Retry after 2 seconds
                 setTimeout(processNextLink, 2000);
                 return;
             }
             
-            // Get URLs from queue
-            const urls = queueListEl.value.split('\n').filter(line => line.trim());
+            // Get next URL from any queue
+            const next = getNextUrlFromAllQueues();
             
-            if (urls.length === 0) {
-                // Queue is empty, hide processing indicator and wait
-                document.getElementById('processingIndicator').innerHTML = '';
-                console.log('[AUTO-PROCESSOR] Queue empty, waiting for new items...');
+            if (!next) {
+                // All queues empty
+                console.log('[AUTO-PROCESSOR] All queues empty, waiting for new items...');
                 // Check again in 5 seconds in case user adds more
                 setTimeout(processNextLink, 5000);
                 return;
             }
             
-            // Get the first URL from queue
-            const url = urls[0].trim();
-            console.log(`[AUTO-PROCESSOR] Moving to processing: ${url}`);
+            const { url, category } = next;
+            console.log(`[AUTO-PROCESSOR] Processing from ${category} queue: ${url}`);
             
-            // Move URL from queue to processing
-            urls.shift(); // Remove first URL from queue
-            queueListEl.value = urls.join('\n');
-            processingListEl.value = url;
+            // Move URL to processing list for this category
+            const processingEl = document.getElementById(`${category}ProcessingList`);
+            processingEl.value = url;
             saveQueuesToStorage();
             
-            // Show processing indicator
-            document.getElementById('processingIndicator').innerHTML = '<span class="status-indicator status-processing"></span>';
             isProcessing = true;
             
             // Detect mode from URL
@@ -803,7 +946,12 @@
                 const response = await fetch('/load_content', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ url, mode, auto_send_telegram: true })
+                    body: JSON.stringify({ 
+                        url, 
+                        mode, 
+                        auto_send_telegram: true,
+                        category: category 
+                    })
                 });
                 
                 const data = await response.json();
@@ -811,22 +959,21 @@
                 if (response.ok && data.success) {
                     // Success - move to finished list
                     console.log(`[AUTO-PROCESSOR] ✅ Success: ${url}`);
-                    moveToFinished(url);
+                    moveToFinished(url, category);
                 } else {
                     // Failed - move to failed list
                     const errorMsg = data.error || 'Unknown error';
                     console.log(`[AUTO-PROCESSOR] ❌ Failed: ${url} - ${errorMsg}`);
-                    moveToFailed(url, errorMsg);
+                    moveToFailed(url, errorMsg, category);
                 }
             } catch (error) {
                 // Network or other error - move to failed list
                 console.log(`[AUTO-PROCESSOR] ❌ Error: ${url} - ${error.message}`);
-                moveToFailed(url, error.message);
+                moveToFailed(url, error.message, category);
             } finally {
                 // Clear processing list
-                processingListEl.value = '';
+                processingEl.value = '';
                 isProcessing = false;
-                document.getElementById('processingIndicator').innerHTML = '';
                 saveQueuesToStorage();
                 
                 // Process next item immediately (small delay to prevent tight loop)
@@ -836,18 +983,20 @@
         }
         
         // Move URL to finished list
-        function moveToFinished(url) {
-            const finishedListEl = document.getElementById('finishedList');
+        function moveToFinished(url, category) {
+            const finishedListEl = document.getElementById(`${category}FinishedList`);
             const currentFinished = finishedListEl.value.trim();
             finishedListEl.value = currentFinished ? `${currentFinished}\n${url}` : url;
+            saveQueuesToStorage();
         }
         
         // Move URL to failed list
-        function moveToFailed(url, error) {
-            const failedListEl = document.getElementById('failedList');
+        function moveToFailed(url, error, category) {
+            const failedListEl = document.getElementById(`${category}FailedList`);
             const currentFailed = failedListEl.value.trim();
             const entry = `${url} - Error: ${error}`;
             failedListEl.value = currentFailed ? `${currentFailed}\n${entry}` : entry;
+            saveQueuesToStorage();
         }
         
         function handleFileSelect(event) {

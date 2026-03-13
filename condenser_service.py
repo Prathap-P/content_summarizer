@@ -1,3 +1,4 @@
+from datetime import datetime
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from system_prompts import *
@@ -8,15 +9,15 @@ REDUCE_BATCH_SIZE = 3  # Number of chunks to reduce per batch (smaller = less ha
 FINAL_CONSOLIDATION_THRESHOLD = 15000  # Chars threshold to trigger final consolidation
 
 def condense_content(content: str, current_model):
-    print(f"[INFO] condense_content: Starting condensation for {len(content)} chars")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] condense_content: Starting condensation for {len(content)} chars")
     chunks = split_content(content)
-    print(f"[INFO] Content split into {len(chunks)} chunks")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Content split into {len(chunks)} chunks")
     processed_chunks = []
     map_prompt = map_reduce_custom_prompts["map_prompt"]
     reduce_prompt = map_reduce_custom_prompts["reduce_prompt"]
 
     #Map phase
-    print("[INFO] Starting MAP phase")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Starting MAP phase")
     for idx, chunk in enumerate(chunks, 1):
         print(f"[DEBUG] Processing chunk {idx}/{len(chunks)} ({len(chunk)} chars)")
         map_input = f"""
@@ -45,9 +46,9 @@ def condense_content(content: str, current_model):
         processed_chunks.append(cleaned_chunk_response)
         print(f"[DEBUG] Cleaned chunk {idx} processed: {len(cleaned_chunk_response)} chars")
 
-    print(f"[INFO] MAP phase complete. {len(processed_chunks)} chunks processed")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] MAP phase complete. {len(processed_chunks)} chunks processed")
     #Reduce phase
-    print("[INFO] Starting REDUCE phase")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Starting REDUCE phase")
     
     reduce_prompt = map_reduce_custom_prompts["reduce_prompt"]
     reduce_with_context_prompt = map_reduce_custom_prompts["reduce_with_context_prompt"]
@@ -55,7 +56,7 @@ def condense_content(content: str, current_model):
     # Check if we need batch processing
     if len(processed_chunks) <= REDUCE_BATCH_SIZE:
         # Single batch - use original logic
-        print(f"[INFO] Single batch mode ({len(processed_chunks)} chunks)")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Single batch mode ({len(processed_chunks)} chunks)")
         combined_chunks = "\n\n---\n\n".join(processed_chunks)
         print(f"[DEBUG] Combined chunks: {len(combined_chunks)} chars")
         
@@ -85,7 +86,7 @@ def condense_content(content: str, current_model):
     else:
         # Batch mode with context continuity
         num_batches = (len(processed_chunks) + REDUCE_BATCH_SIZE - 1) // REDUCE_BATCH_SIZE
-        print(f"[INFO] Batch mode: Processing {len(processed_chunks)} chunks in {num_batches} batches (with context continuity)")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Batch mode: Processing {len(processed_chunks)} chunks in {num_batches} batches (with context continuity)")
         
         batch_results = []
         previous_context = ""
@@ -95,7 +96,7 @@ def condense_content(content: str, current_model):
             end_idx = min((batch_idx + 1) * REDUCE_BATCH_SIZE, len(processed_chunks))
             batch_chunks = processed_chunks[start_idx:end_idx]
             
-            print(f"[INFO] Processing batch {batch_idx + 1}/{num_batches} ({len(batch_chunks)} chunks)...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Processing batch {batch_idx + 1}/{num_batches} ({len(batch_chunks)} chunks)...")
             
             combined_batch = "\n\n---\n\n".join(batch_chunks)
             print(f"[DEBUG] Batch {batch_idx + 1} size: {len(combined_batch)} chars")
@@ -137,12 +138,12 @@ def condense_content(content: str, current_model):
         
         # Concatenate all batch results
         final_output = "\n\n".join(batch_results)
-        print(f"[INFO] All batches combined: {len(final_output)} chars")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] All batches combined: {len(final_output)} chars")
         
         # Stage 2: Final consolidation if output is still too large
         if len(final_output) > FINAL_CONSOLIDATION_THRESHOLD:
-            print(f"[INFO] Stage 2: Final consolidation needed ({len(final_output)} > {FINAL_CONSOLIDATION_THRESHOLD} chars)")
-            print(f"[INFO] Consolidating {len(batch_results)} batch results...")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Stage 2: Final consolidation needed ({len(final_output)} > {FINAL_CONSOLIDATION_THRESHOLD} chars)")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Consolidating {len(batch_results)} batch results...")
             
             consolidation_input = f"""
                 System:
@@ -167,9 +168,9 @@ def condense_content(content: str, current_model):
             
             print(f"[SUCCESS] Final consolidation complete: {len(final_output)} chars")
         else:
-            print(f"[INFO] No final consolidation needed ({len(final_output)} chars < {FINAL_CONSOLIDATION_THRESHOLD})")
+            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] No final consolidation needed ({len(final_output)} chars < {FINAL_CONSOLIDATION_THRESHOLD})")
 
-    print(f"[INFO] REDUCE phase complete: {len(final_output)} chars")
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] REDUCE phase complete: {len(final_output)} chars")
     print(f"[SUCCESS] Condensation complete. Original: {len(content)} -> Final: {len(final_output)} chars")
     return final_output
 

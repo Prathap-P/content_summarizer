@@ -38,7 +38,7 @@ def remove_thinking_tokens(text: str) -> tuple[str, bool]:
         start_pos = last_open_index + len(opening_tag)
         final_content = text[start_pos:last_close_index].strip()
         
-        print(f"[INFO] Found <final_script> tags, extracting content from last occurrence")
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Found <final_script> tags, extracting content from last occurrence")
         print(f"[CLEANUP] Extracted {len(final_content)} chars from final_script tag (removed {original_length - len(final_content)} chars)")
         return final_content, True
     else:
@@ -47,7 +47,7 @@ def remove_thinking_tokens(text: str) -> tuple[str, bool]:
         return text.strip(), False
 
 
-def create_backup_file(url: str, content: str, audio_file_path: str) -> str:
+def create_backup_file(url: str, content: str, audio_file_path: str, category: str = 'tech') -> str:
     """
     Create a backup file for content and audio when Telegram sending fails.
     
@@ -55,6 +55,7 @@ def create_backup_file(url: str, content: str, audio_file_path: str) -> str:
         url: The source URL
         content: The condensed content text
         audio_file_path: Path to the audio file
+        category: Queue category (tech/social/science), defaults to 'tech'
         
     Returns:
         Path to the created backup file
@@ -81,25 +82,26 @@ def create_backup_file(url: str, content: str, audio_file_path: str) -> str:
     # Write content and audio path to the backup file
     with open(backup_path, 'w', encoding='utf-8') as f:
         f.write(f"Source URL: {url}\n")
+        f.write(f"Category: {category}\n")
         f.write(f"Backup Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"{'='*80}\n\n")
         f.write(content)
         f.write(f"\n\n{'='*80}\n")
         f.write(f"Audio File Path: {audio_file_path}\n")
     
-    print(f"[BACKUP] Created backup file: {backup_path}")
+    print(f"[BACKUP] Created backup file: {backup_path} (category: {category})")
     return str(backup_path)
 
 
 def parse_backup_file(file_path: str) -> Optional[dict]:
     """
-    Parse a backup file to extract URL, content, and audio file path.
+    Parse a backup file to extract URL, content, audio file path, and category.
     
     Args:
         file_path: Path to the backup file
         
     Returns:
-        Dictionary with 'url', 'content', 'audio_file_path', 'timestamp', or None if parsing fails
+        Dictionary with 'url', 'content', 'audio_file_path', 'timestamp', 'category', or None if parsing fails
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -111,6 +113,10 @@ def parse_backup_file(file_path: str) -> Optional[dict]:
             print(f"[BACKUP PARSE] Failed to find URL in {file_path}")
             return None
         url = url_match.group(1).strip()
+        
+        # Extract category (optional, defaults to 'tech' for backward compatibility)
+        category_match = re.search(r'^Category:\s*(.+)$', content, re.MULTILINE)
+        category = category_match.group(1).strip() if category_match else 'tech'
         
         # Extract timestamp
         timestamp_match = re.search(r'^Backup Created:\s*(.+)$', content, re.MULTILINE)
@@ -133,6 +139,7 @@ def parse_backup_file(file_path: str) -> Optional[dict]:
         
         return {
             'url': url,
+            'category': category,
             'content': main_content,
             'audio_file_path': audio_file_path,
             'timestamp': timestamp,
