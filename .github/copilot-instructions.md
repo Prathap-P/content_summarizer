@@ -8,7 +8,8 @@ A Flask web app that ingests news articles (URL) or YouTube videos (URL), conden
 ```
 app.py                         # Flask API — routes, global conversation state
 main.py                        # read_website_content() via NewsURLLoader
-youtube_transcript_fetcher.py  # get_youtube_transcript() via YouTubeTranscriptApi
+youtube_transcript_fetcher.py  # get_youtube_transcript() — transcript API with Whisper fallback
+whisper_transcriber.py         # Whisper pipeline: duration check, yt-dlp download, mlx-whisper
 condenser_service.py           # Map-reduce LLM condensation pipeline
 llm_models.py                  # All LLM instances; get_model() factory
 system_prompts.py              # All prompt strings (news, YouTube, map/reduce)
@@ -19,6 +20,7 @@ telegram_sender.py             # send_telegram_with_audio/attachments
 templates/index.html           # Single-page frontend
 backup_content/                # Files saved when delivery fails
 kokoro_outputs/                # Generated .wav files
+yt_audio/                      # Audio downloaded by yt-dlp for Whisper transcription
 ```
 
 ## Key Conventions
@@ -34,6 +36,30 @@ kokoro_outputs/                # Generated .wav files
 - Acronyms must be expanded on first use; numbers written in natural-reading form.
 - All LLM responses are piped through `remove_thinking_tokens()` in `utils.py` before TTS. This function expects `<final_script>...</final_script>` tags around the model's final output.
 - `remove_thinking_tokens()` returns `(text, False)` if tags are missing — always check the boolean and log a `[WARNING]` before continuing.
+
+### YouTube Transcript Strategy (`youtube_transcript_fetcher.py` + `whisper_transcriber.py`)
+Two paths exist; the fetcher selects automatically:
+
+```
+get_youtube_transcript(url)
+  │
+  ├─ is_transcript_auto_generated(video_id)
+  │     └─ list_transcripts() → any manual transcript? ──→ NO / listing fails ──→ Whisper path
+  │                                                    ↘ YES ──────────────────────────────────┐
+  │                                                                                             │
+  ├─ Whisper path                                      Manual transcript path ◄────────────────┘
+  │   get_transcript_via_whisper(url, video_id)            YouTubeTranscriptApi().fetch()
+  │     1. get_video_duration() — metadata only            → join text fields → return string
+  │     2. warn if > 90 min
+  │     3. download_audio() → yt_audio/<video_id>.mp3
+  │     4. transcribe_audio() → mlx-whisper large-v3
+  │     └─ return plain text string
+  │
+  └─ Both paths return a plain string → condenser_service.condense_content()
+```
+
+- Whisper model: `mlx-community/whisper-large-v3-mlx` (configurable via `WHISPER_MODEL` constant in `whisper_transcriber.py`)
+- Audio saved permanently to `yt_audio/<video_id>.mp3` — reuse on re-runs by checking existence before re-downloading (not yet implemented)
 
 ### Condensation Pipeline (`condenser_service.py`)
 - Map phase: splits content with `RecursiveCharacterTextSplitter`, summarises each chunk individually.
@@ -91,6 +117,11 @@ Add new packages to `pyproject.toml` only — do not create a separate `requirem
 - **Kokoro TTS** needs CUDA or Apple Silicon MPS; CPU fallback is very slow.
 - YouTube transcript failures return error strings, not exceptions — always check output before passing to LLM.
 - `ConversationBufferWindowMemory` is global; reset between sessions or context bleeds across users.
+- `is_transcript_auto_generated()` returns `True` (→ Whisper) if listing fails — this is intentional and safe.
+- Whisper (`mlx-whisper`) downloads `mlx-community/whisper-large-v3-mlx` (~3 GB) from HuggingFace on first use; subsequent runs use the cached model.
+- `yt-dlp` requires **ffmpeg** to be installed system-wide for the audio post-processor (`FFmpegExtractAudio`). Install with `brew install ffmpeg`.
+- For videos >90 min, `get_transcript_via_whisper()` logs a warning but proceeds — transcription can take 5–15 min on Apple Silicon with `large-v3`.
+- Downloaded audio is saved permanently to `yt_audio/<video_id>.mp3` — not deleted after transcription.
 
 ---
 

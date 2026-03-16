@@ -486,10 +486,18 @@
             <h3>🔧 Tech</h3>
             
             <div class="queue-section">
-                <div class="label">📋 Queue</div>
+                <div class="label">📋 Transcript Queue</div>
                 <textarea 
                     id="techQueueList" 
                     placeholder="Tech URLs (one per line)"
+                ></textarea>
+            </div>
+
+            <div class="queue-section">
+                <div class="label">🎵 Audio Queue</div>
+                <textarea 
+                    id="techAudioQueueList" 
+                    placeholder="YouTube URLs — forced Whisper (one per line)"
                 ></textarea>
             </div>
             
@@ -526,10 +534,18 @@
             <h3>👥 Social</h3>
             
             <div class="queue-section">
-                <div class="label">📋 Queue</div>
+                <div class="label">📋 Transcript Queue</div>
                 <textarea 
                     id="socialQueueList" 
                     placeholder="Social URLs (one per line)"
+                ></textarea>
+            </div>
+
+            <div class="queue-section">
+                <div class="label">🎵 Audio Queue</div>
+                <textarea 
+                    id="socialAudioQueueList" 
+                    placeholder="YouTube URLs — forced Whisper (one per line)"
                 ></textarea>
             </div>
             
@@ -566,10 +582,18 @@
             <h3>🔬 Science</h3>
             
             <div class="queue-section">
-                <div class="label">📋 Queue</div>
+                <div class="label">📋 Transcript Queue</div>
                 <textarea 
                     id="scienceQueueList" 
                     placeholder="Science URLs (one per line)"
+                ></textarea>
+            </div>
+
+            <div class="queue-section">
+                <div class="label">🎵 Audio Queue</div>
+                <textarea 
+                    id="scienceAudioQueueList" 
+                    placeholder="YouTube URLs — forced Whisper (one per line)"
                 ></textarea>
             </div>
             
@@ -798,6 +822,10 @@
                     saveQueuesToStorage();
                     syncWakeLock();
                 });
+                document.getElementById(`${cat}AudioQueueList`).addEventListener('input', () => {
+                    saveQueuesToStorage();
+                    syncWakeLock();
+                });
             });
 
             // Handle page visibility changes to resume processing if tab becomes visible
@@ -812,75 +840,37 @@
         
         // Load queues from localStorage
         function loadQueuesFromStorage() {
-            // Tech queue
-            const techQueue = localStorage.getItem('techQueue') || '';
-            const techProcessing = localStorage.getItem('techProcessing') || '';
-            const techFailed = localStorage.getItem('techFailed') || '';
-            const techFinished = localStorage.getItem('techFinished') || '';
-            
-            // Social queue
-            const socialQueue = localStorage.getItem('socialQueue') || '';
-            const socialProcessing = localStorage.getItem('socialProcessing') || '';
-            const socialFailed = localStorage.getItem('socialFailed') || '';
-            const socialFinished = localStorage.getItem('socialFinished') || '';
-            
-            // Science queue
-            const scienceQueue = localStorage.getItem('scienceQueue') || '';
-            const scienceProcessing = localStorage.getItem('scienceProcessing') || '';
-            const scienceFailed = localStorage.getItem('scienceFailed') || '';
-            const scienceFinished = localStorage.getItem('scienceFinished') || '';
-            
-            // Set values
-            document.getElementById('techQueueList').value = techQueue;
-            document.getElementById('techProcessingList').value = techProcessing;
-            document.getElementById('techFailedList').value = techFailed;
-            document.getElementById('techFinishedList').value = techFinished;
-            
-            document.getElementById('socialQueueList').value = socialQueue;
-            document.getElementById('socialProcessingList').value = socialProcessing;
-            document.getElementById('socialFailedList').value = socialFailed;
-            document.getElementById('socialFinishedList').value = socialFinished;
-            
-            document.getElementById('scienceQueueList').value = scienceQueue;
-            document.getElementById('scienceProcessingList').value = scienceProcessing;
-            document.getElementById('scienceFailedList').value = scienceFailed;
-            document.getElementById('scienceFinishedList').value = scienceFinished;
+            ['tech', 'social', 'science'].forEach(cat => {
+                document.getElementById(`${cat}QueueList`).value         = localStorage.getItem(`${cat}Queue`)         || '';
+                document.getElementById(`${cat}AudioQueueList`).value    = localStorage.getItem(`${cat}AudioQueue`)    || '';
+                document.getElementById(`${cat}ProcessingList`).value    = localStorage.getItem(`${cat}Processing`)    || '';
+                document.getElementById(`${cat}FailedList`).value        = localStorage.getItem(`${cat}Failed`)        || '';
+                document.getElementById(`${cat}FinishedList`).value      = localStorage.getItem(`${cat}Finished`)      || '';
+            });
         }
         
         // Save queues to localStorage
         function saveQueuesToStorage() {
-            // Tech queue
-            localStorage.setItem('techQueue', document.getElementById('techQueueList').value);
-            localStorage.setItem('techProcessing', document.getElementById('techProcessingList').value);
-            localStorage.setItem('techFailed', document.getElementById('techFailedList').value);
-            localStorage.setItem('techFinished', document.getElementById('techFinishedList').value);
-            
-            // Social queue
-            localStorage.setItem('socialQueue', document.getElementById('socialQueueList').value);
-            localStorage.setItem('socialProcessing', document.getElementById('socialProcessingList').value);
-            localStorage.setItem('socialFailed', document.getElementById('socialFailedList').value);
-            localStorage.setItem('socialFinished', document.getElementById('socialFinishedList').value);
-            
-            // Science queue
-            localStorage.setItem('scienceQueue', document.getElementById('scienceQueueList').value);
-            localStorage.setItem('scienceProcessing', document.getElementById('scienceProcessingList').value);
-            localStorage.setItem('scienceFailed', document.getElementById('scienceFailedList').value);
-            localStorage.setItem('scienceFinished', document.getElementById('scienceFinishedList').value);
+            ['tech', 'social', 'science'].forEach(cat => {
+                localStorage.setItem(`${cat}Queue`,         document.getElementById(`${cat}QueueList`).value);
+                localStorage.setItem(`${cat}AudioQueue`,    document.getElementById(`${cat}AudioQueueList`).value);
+                localStorage.setItem(`${cat}Processing`,    document.getElementById(`${cat}ProcessingList`).value);
+                localStorage.setItem(`${cat}Failed`,        document.getElementById(`${cat}FailedList`).value);
+                localStorage.setItem(`${cat}Finished`,      document.getElementById(`${cat}FinishedList`).value);
+            });
         }
         
         // Check if any queue or processing list has active items
         function hasActiveQueueItems() {
             const categories = ['tech', 'social', 'science'];
             for (const category of categories) {
-                const queueEl = document.getElementById(`${category}QueueList`);
+                const queueEl      = document.getElementById(`${category}QueueList`);
+                const audioQueueEl = document.getElementById(`${category}AudioQueueList`);
                 const processingEl = document.getElementById(`${category}ProcessingList`);
                 
-                if (queueEl && queueEl.value.trim().length > 0) {
-                    return true;
-                }
-                if (processingEl && processingEl.value.trim().length > 0) {
-                    return true;
-                }
+                if (queueEl      && queueEl.value.trim().length > 0)      return true;
+                if (audioQueueEl && audioQueueEl.value.trim().length > 0) return true;
+                if (processingEl && processingEl.value.trim().length > 0) return true;
             }
             return false;
         }
@@ -945,15 +935,23 @@
             const categories = ['tech', 'social', 'science'];
             
             for (const category of categories) {
-                const queueEl = document.getElementById(`${category}QueueList`);
-                const urls = queueEl.value.split('\n').filter(line => line.trim());
-                
-                if (urls.length > 0) {
-                    const url = urls[0].trim();
-                    // Remove from queue
-                    urls.shift();
-                    queueEl.value = urls.join('\n');
-                    return { url, category };
+                // Check transcript queue first, then audio queue
+                const queues = [
+                    { el: document.getElementById(`${category}QueueList`),      fetch_mode: 'transcript' },
+                    { el: document.getElementById(`${category}AudioQueueList`), fetch_mode: 'audio' },
+                ];
+
+                for (const { el, fetch_mode } of queues) {
+                    const urls = el.value.split('\n').filter(line => line.trim());
+                    if (urls.length > 0) {
+                        const url = urls[0].trim();
+                        urls.shift();
+                        el.value = urls.join('\n');
+                        // Persist removal immediately — a page reload must never
+                        // replay a URL that has already been handed off.
+                        saveQueuesToStorage();
+                        return { url, category, fetch_mode };
+                    }
                 }
             }
             
@@ -1004,13 +1002,13 @@
                 return;
             }
             
-            const { url, category } = next;
-            console.log(`[AUTO-PROCESSOR] Processing from ${category} queue: ${url}`);
+            const { url, category, fetch_mode } = next;
+            console.log(`[AUTO-PROCESSOR] Processing from ${category} queue (${fetch_mode}): ${url}`);
             
             // Move URL to processing list for this category BEFORE acquiring wake lock
             // so hasActiveQueueItems() reflects reality when checked elsewhere
             const processingEl = document.getElementById(`${category}ProcessingList`);
-            processingEl.value = url;
+            processingEl.value = `[${fetch_mode === 'audio' ? 'A' : 'T'}] ${url}`;
             saveQueuesToStorage();
             
             // Ensure wake lock is held now that processing list is populated
@@ -1028,6 +1026,7 @@
                     body: JSON.stringify({ 
                         url, 
                         mode, 
+                        fetch_mode,
                         auto_send_telegram: true,
                         category: category 
                     })
@@ -1037,18 +1036,19 @@
                 
                 if (response.ok && data.success) {
                     // Success - move to finished list
-                    console.log(`[AUTO-PROCESSOR] ✅ Success: ${url}`);
-                    moveToFinished(url, category);
+                    const cacheTag = data.from_cache ? ` [CACHED:${data.video_id || 'hit'}]` : '';
+                    console.log(`[AUTO-PROCESSOR] ✅ Success${cacheTag}: ${url}`);
+                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id);
                 } else {
                     // Failed - move to failed list
                     const errorMsg = data.error || 'Unknown error';
                     console.log(`[AUTO-PROCESSOR] ❌ Failed: ${url} - ${errorMsg}`);
-                    moveToFailed(url, errorMsg, category);
+                    moveToFailed(url, errorMsg, category, fetch_mode);
                 }
             } catch (error) {
                 // Network or other error - move to failed list
                 console.log(`[AUTO-PROCESSOR] ❌ Error: ${url} - ${error.message}`);
-                moveToFailed(url, error.message, category);
+                moveToFailed(url, error.message, category, fetch_mode);
             } finally {
                 // Clear processing list
                 processingEl.value = '';
@@ -1065,18 +1065,22 @@
         }
         
         // Move URL to finished list
-        function moveToFinished(url, category) {
+        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null) {
             const finishedListEl = document.getElementById(`${category}FinishedList`);
             const currentFinished = finishedListEl.value.trim();
-            finishedListEl.value = currentFinished ? `${currentFinished}\n${url}` : url;
+            const tag = fetch_mode === 'audio' ? '[A]' : '[T]';
+            const cacheTag = fromCache ? ` [CACHED:${videoId || 'hit'}]` : '';
+            const entry = `${tag}${cacheTag} ${url}`;
+            finishedListEl.value = currentFinished ? `${currentFinished}\n${entry}` : entry;
             saveQueuesToStorage();
         }
         
         // Move URL to failed list
-        function moveToFailed(url, error, category) {
+        function moveToFailed(url, error, category, fetch_mode) {
             const failedListEl = document.getElementById(`${category}FailedList`);
             const currentFailed = failedListEl.value.trim();
-            const entry = `${url} - Error: ${error}`;
+            const tag = fetch_mode === 'audio' ? '[A]' : '[T]';
+            const entry = `${tag} ${url} - Error: ${error}`;
             failedListEl.value = currentFailed ? `${currentFailed}\n${entry}` : entry;
             saveQueuesToStorage();
         }

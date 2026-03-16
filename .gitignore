@@ -10,3 +10,5 @@ kokoro_outputs/
 .roo
 .DS_Store
 backup_content/
+condensation_cache/
+yt_audio/

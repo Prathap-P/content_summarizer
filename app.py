@@ -18,9 +18,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from main import read_website_content
-from youtube_transcript_fetcher import get_youtube_transcript
+from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id
+from whisper_transcriber import get_transcript_via_whisper
 from system_prompts import news_explainer_system_message, subject_matter_expert_prompt
 from condenser_service import condense_content
+from condensation_cache import (
+    compute_cache_key,
+    load_checkpoint,
+    create_checkpoint,
+    save_checkpoint,
+    get_progress_summary,
+    purge_expired_checkpoints,
+)
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
@@ -38,7 +47,8 @@ window_memory_100 = ConversationBufferWindowMemory(k=100)
 conversation_chain = None
 current_mode = None
 session_history = InMemoryChatMessageHistory()
-current_model = get_model("mlx_community_qwen_stream_local_llm")
+current_model_key = "mlx_community_qwen_stream_local_llm"
+current_model = get_model(current_model_key)
 
 def check_llm_server():
     """Check if the local LLM server is running"""
@@ -116,77 +126,199 @@ def load_content():
     mode = data.get('mode', 'news')  # 'news' or 'youtube'
     auto_send_telegram = data.get('auto_send_telegram', False)  # Only true for auto-processor
     category = data.get('category', 'tech')  # 'tech', 'social', or 'science'
+    fetch_mode = data.get('fetch_mode', 'transcript')  # 'transcript' or 'audio'
 
     if not url:
         return jsonify({'error': 'URL is required'}), 400
 
     if mode not in ['news', 'youtube']:
         return jsonify({'error': 'Invalid mode. Use "news" or "youtube"'}), 400
-    
+
+    if fetch_mode not in ['transcript', 'audio']:
+        print(f"[WARNING] Invalid fetch_mode '{fetch_mode}', defaulting to 'transcript'")
+        fetch_mode = 'transcript'
+
+    # Audio queue only makes sense for YouTube — reject non-YouTube URLs early
+    if fetch_mode == 'audio' and mode != 'youtube':
+        return jsonify({
+            'error': 'Audio queue only supports YouTube URLs. Use the Transcript queue for news articles.',
+            'success': False
+        }), 400
+
     if category not in ['tech', 'social', 'science']:
         print(f"[WARNING] Invalid category '{category}', defaulting to 'tech'")
         category = 'tech'
+
+    # ------------------------------------------------------------------
+    # Normalise YouTube URLs — strip playlist params, tracking params,
+    # and everything else, reducing to bare https://www.youtube.com/watch?v=ID.
+    # This guarantees a single canonical form is used for the cache key,
+    # the stored checkpoint, yt-dlp, and the transcript API.
+    # ------------------------------------------------------------------
+    if mode == 'youtube':
+        _vid = extract_video_id(url)
+        if not _vid:
+            return jsonify({'error': 'Invalid YouTube URL format.', 'success': False}), 400
+        url = f"https://www.youtube.com/watch?v={_vid}"
+        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Normalised YouTube URL → {url}")
+
+    # ------------------------------------------------------------------
+    # Checkpoint setup — compute key before any I/O so every stage can
+    # save progress and a retry resumes from where it stopped.
+    # ------------------------------------------------------------------
+    checkpoint_key = compute_cache_key(url, mode, current_model_key, fetch_mode)
+    checkpoint = load_checkpoint(checkpoint_key)
+    if checkpoint is None:
+        checkpoint_key, checkpoint = create_checkpoint(url, mode, current_model_key, fetch_mode)
+    else:
+        print(
+            f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+            f"Resuming from checkpoint {checkpoint_key} — "
+            f"{get_progress_summary(checkpoint)}"
+        )
+
+    audio_time = None  # declared early so except blocks can reference it
 
     try:
         # Initialize conversation chain for the selected mode
         conversation_chain = create_runnable_chain(mode)
         current_mode = mode
 
-        # Step 1: Fetch raw content
-        if mode == 'news':
-            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Loading news article from: {url}")
-            documents = read_website_content(url)
-            if not documents:
-                print(f"[ERROR] Failed to load article from: {url}")
-                return jsonify({'error': 'Could not load article from URL'}), 400
+        # --------------------------------------------------------------
+        # Full cache hit: audio already generated and file still on disk
+        # --------------------------------------------------------------
+        cached_audio_path = checkpoint.get("audio_file_path")
+        _cache_hit = False
+        # url is already normalised, so extract_video_id is stable here
+        _video_id = extract_video_id(url) if mode == 'youtube' else None
+        if (
+            cached_audio_path
+            and Path(cached_audio_path).exists()
+            and checkpoint.get("final_output")
+        ):
+            condensed_content = checkpoint["final_output"]
+            audio_file = os.path.basename(cached_audio_path)
+            audio_file_path = cached_audio_path
+            raw_word_count = len((checkpoint.get("raw_content") or "").split())
+            condensed_word_count = len(condensed_content.split())
+            _cache_hit = True
+            print(
+                f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+                f"Full cache hit — video_id={_video_id} audio={audio_file}"
+            )
+            # Skip straight to Telegram / response building below
+        else:
+            # -----------------------------------------------------------
+            # Step 1: Fetch raw content (resume if already cached)
+            # -----------------------------------------------------------
+            if checkpoint.get("raw_content"):
+                raw_content = checkpoint["raw_content"]
+                print(
+                    f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Resuming: raw_content already cached ({len(raw_content)} chars), "
+                    f"source={checkpoint.get('source')}"
+                )
+            elif mode == 'news':
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Loading news article from: {url}")
+                documents = read_website_content(url)
+                if not documents:
+                    print(f"[ERROR] Failed to load article from: {url}")
+                    return jsonify({'error': 'Could not load article from URL'}), 400
+                raw_content = documents[0].page_content
+                checkpoint["raw_content"] = raw_content
+                checkpoint["source"] = "news_loader"
+                save_checkpoint(checkpoint_key, checkpoint)
+                print(f"[SUCCESS] Article loaded: {len(raw_content)} chars")
 
-            raw_content = documents[0].page_content
-            print(f"[SUCCESS] Article loaded successfully. Length: {len(raw_content)} characters")
+            elif mode == 'youtube':
+                # url is already normalised to watch?v=ID — extract_video_id always succeeds here
+                video_id = extract_video_id(url)
 
-        elif mode == 'youtube':
-            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Fetching YouTube transcript from: {url}")
-            raw_content = get_youtube_transcript(url)
+                if fetch_mode == 'audio':
+                    # Audio queue: bypass transcript API, go straight to Whisper.
+                    # download_audio() reuses a cached mp3 if it already exists on disk,
+                    # so a crash mid-transcription does not force a full re-download.
+                    print(
+                        f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+                        f"Audio queue: forcing Whisper for video: {video_id}"
+                    )
+                    raw_content = get_transcript_via_whisper(url, video_id)
+                    if raw_content.startswith("Error:"):
+                        print(f"[ERROR] Whisper transcription failed: {raw_content}")
+                        return jsonify({'error': raw_content, 'success': False}), 400
+                    checkpoint["raw_content"] = raw_content
+                    checkpoint["source"] = "whisper"
+                    save_checkpoint(checkpoint_key, checkpoint)
+                    print(f"[SUCCESS] Whisper transcript obtained: {len(raw_content)} chars")
+                else:
+                    # Transcript queue: try transcript API (manual transcripts only),
+                    # fall back to Whisper automatically inside get_youtube_transcript().
+                    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Fetching YouTube transcript from: {url}")
+                    raw_content = get_youtube_transcript(url)
+                    if (
+                        raw_content.startswith("No transcript available")
+                        or raw_content.startswith("Error fetching")
+                        or raw_content.startswith("Invalid YouTube")
+                        or raw_content.startswith("Error:")
+                    ):
+                        print(f"[ERROR] YouTube transcript fetch failed: {raw_content}")
+                        return jsonify({'error': raw_content, 'success': False}), 400
+                    checkpoint["raw_content"] = raw_content
+                    checkpoint["source"] = "youtube_fetcher"
+                    save_checkpoint(checkpoint_key, checkpoint)
+                    print(f"[SUCCESS] YouTube transcript fetched: {len(raw_content)} chars")
 
-            # Check if transcript fetch failed
-            if raw_content.startswith("No transcript available") or raw_content.startswith("Error fetching") or raw_content.startswith("Invalid YouTube"):
-                print(f"[ERROR] YouTube transcript fetch failed: {raw_content}")
-                return jsonify({
-                    'error': raw_content,
-                    'success': False
-                }), 400
-            
-            print(f"[SUCCESS] YouTube transcript fetched successfully. Length: {len(raw_content)} characters")
+            raw_word_count = len(raw_content.split())
 
-        # Step 2: Condense content using condenser_service (no model conversation yet)
-        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensing content using condenser service...")
-        condensed_content = condense_content(raw_content, current_model)
-        print(f"[SUCCESS] Content condensed. Original: {len(raw_content)} chars -> Condensed: {len(condensed_content)} chars")
+            # -----------------------------------------------------------
+            # Step 2: Condense (resume if final_output already cached)
+            # -----------------------------------------------------------
+            if checkpoint.get("final_output"):
+                condensed_content = checkpoint["final_output"]
+                print(
+                    f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Resuming: final_output already cached ({len(condensed_content)} chars), "
+                    f"skipping all condensation"
+                )
+            else:
+                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensing content...")
+                condensed_content = condense_content(
+                    raw_content, current_model, checkpoint_key, checkpoint
+                )
+                print(
+                    f"[SUCCESS] Condensed: {len(raw_content)} -> {len(condensed_content)} chars"
+                )
 
-        # Calculate word counts
-        raw_word_count = len(raw_content.split())
-        condensed_word_count = len(condensed_content.split())
-        
-        # Step 3: Generate audio for condensed content
-        audio_file = None
-        audio_file_path = None
-        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for condensed content ({len(condensed_content)} chars)...")
-        audio_start_time = time.time()
-        
-        try:
-            audio = generate_audio(condensed_content)
-            audio_file_path = create_audio_file(audio)
-            audio_file = os.path.basename(audio_file_path)
-            
-            audio_time = time.time() - audio_start_time
-            print(f"[SUCCESS] Audio generated: {audio_file}")
-            print(f"[TIME] Audio generation took: {audio_time:.2f}s")
-        except Exception as e:
-            error_msg = f"Audio generation failed: {e}"
-            print(f"[ERROR] {error_msg}")
-            if auto_send_telegram:
-                return jsonify({'error': error_msg, 'success': False}), 422
-            # For manual load, audio failure is not critical
-            print(f"[WARNING] Continuing without audio")
+            condensed_word_count = len(condensed_content.split())
+
+            # -----------------------------------------------------------
+            # Step 3: Generate audio (resume if already cached)
+            # -----------------------------------------------------------
+            audio_file = None
+            audio_file_path = None
+            print(
+                f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+                f"Generating audio ({len(condensed_content)} chars)..."
+            )
+            audio_start_time = time.time()
+
+            try:
+                audio = generate_audio(condensed_content)
+                audio_file_path = create_audio_file(audio)
+                audio_file = os.path.basename(audio_file_path)
+                # Save audio path BEFORE building the response to avoid losing it on crash
+                checkpoint["audio_file_path"] = str(audio_file_path)
+                save_checkpoint(checkpoint_key, checkpoint)
+                audio_time = time.time() - audio_start_time
+                print(f"[SUCCESS] Audio generated: {audio_file}")
+                print(f"[TIME] Audio generation took: {audio_time:.2f}s")
+            except Exception as e:
+                error_msg = f"Audio generation failed: {e}"
+                print(f"[ERROR] {error_msg}")
+                if auto_send_telegram:
+                    return jsonify({'error': error_msg, 'success': False}), 422
+                # For manual load, audio failure is not critical
+                print(f"[WARNING] Continuing without audio")
         
         # Step 4: Send to Telegram only if auto_send_telegram is True
         if auto_send_telegram:
@@ -282,13 +414,22 @@ def load_content():
             'original_word_count': raw_word_count,
             'audio_file': audio_file,
             'audio_time': round(audio_time, 2) if audio_time else None,
+            'from_cache': _cache_hit,
+            'video_id': _video_id,
             'success': True
         })
 
     except ValueError as e:
-        # ValueError is raised when thinking tokens aren't removed properly
+        # ValueError is raised when thinking tokens aren't removed properly.
+        # The checkpoint has already been saved with all progress so far;
+        # the next retry will resume from the last successful step.
         print(f"[ERROR] Thinking token validation failed: {e}")
-        return jsonify({'error': str(e), 'success': False}), 422
+        return jsonify({
+            'error': str(e),
+            'success': False,
+            'checkpoint_key': checkpoint_key,
+            'resume_progress': get_progress_summary(checkpoint),
+        }), 422
     except Exception as e:
         print(f"[ERROR] load_content failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
@@ -1007,4 +1148,5 @@ def text_to_audio():
         }), 500
 
 if __name__ == '__main__':
+    purge_expired_checkpoints()
     app.run(host="0.0.0.0", port=5000)
