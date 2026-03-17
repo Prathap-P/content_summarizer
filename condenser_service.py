@@ -8,7 +8,7 @@ from condensation_cache import save_checkpoint, MAX_RETRIES_PER_STEP
 
 # Configuration
 REDUCE_BATCH_SIZE = 3  # Number of chunks to reduce per batch (smaller = less hallucination)
-FINAL_CONSOLIDATION_THRESHOLD = 15000  # Chars threshold to trigger final consolidation
+FINAL_CONSOLIDATION_THRESHOLD = 150000  # Chars threshold to trigger final consolidation
 
 
 def condense_content(
@@ -91,11 +91,20 @@ def condense_content(
         """
 
         chunk_response_text = ""
-        for streamed_chunk in current_model.stream(map_input):
-            if hasattr(streamed_chunk, 'content'):
-                chunk_response_text += streamed_chunk.content
-            else:
-                chunk_response_text += str(streamed_chunk)
+        try:
+            for streamed_chunk in current_model.stream(map_input):
+                if hasattr(streamed_chunk, 'content'):
+                    chunk_response_text += streamed_chunk.content
+                else:
+                    chunk_response_text += str(streamed_chunk)
+        except Exception as e:
+            print(f"[ERROR] Model crashed during MAP chunk {idx + 1}/{len(chunks)}: {e}")
+            if _has_checkpoint:
+                checkpoint["map_retry_counts"][str_idx] = (
+                    checkpoint["map_retry_counts"].get(str_idx, 0) + 1
+                )
+                _save()
+            raise ValueError(f"Model crashed during MAP chunk {idx + 1}/{len(chunks)}: {e}")
 
         print(f"[DEBUG] MAP chunk {idx + 1} streaming complete: {len(chunk_response_text)} chars")
         cleaned, success = remove_thinking_tokens(chunk_response_text)
@@ -152,11 +161,20 @@ def condense_content(
 
             print(f"[DEBUG] Streaming REDUCE phase...")
             reduce_response_text = ""
-            for streamed_chunk in current_model.stream(reduce_input):
-                if hasattr(streamed_chunk, 'content'):
-                    reduce_response_text += streamed_chunk.content
-                else:
-                    reduce_response_text += str(streamed_chunk)
+            try:
+                for streamed_chunk in current_model.stream(reduce_input):
+                    if hasattr(streamed_chunk, 'content'):
+                        reduce_response_text += streamed_chunk.content
+                    else:
+                        reduce_response_text += str(streamed_chunk)
+            except Exception as e:
+                print(f"[ERROR] Model crashed during single-batch REDUCE: {e}")
+                if _has_checkpoint:
+                    checkpoint["reduce_retry_counts"]["0"] = (
+                        checkpoint["reduce_retry_counts"].get("0", 0) + 1
+                    )
+                    _save()
+                raise ValueError(f"Model crashed during single-batch REDUCE: {e}")
 
             print(f"[DEBUG] REDUCE streaming complete: {len(reduce_response_text)} chars")
             cleaned_reduce, success = remove_thinking_tokens(reduce_response_text)
@@ -251,11 +269,20 @@ def condense_content(
 
             print(f"[DEBUG] Streaming REDUCE batch {batch_idx + 1}...")
             batch_response_text = ""
-            for streamed_chunk in current_model.stream(reduce_input):
-                if hasattr(streamed_chunk, 'content'):
-                    batch_response_text += streamed_chunk.content
-                else:
-                    batch_response_text += str(streamed_chunk)
+            try:
+                for streamed_chunk in current_model.stream(reduce_input):
+                    if hasattr(streamed_chunk, 'content'):
+                        batch_response_text += streamed_chunk.content
+                    else:
+                        batch_response_text += str(streamed_chunk)
+            except Exception as e:
+                print(f"[ERROR] Model crashed during REDUCE batch {batch_idx + 1}/{num_batches}: {e}")
+                if _has_checkpoint:
+                    checkpoint["reduce_retry_counts"][str_batch] = (
+                        checkpoint["reduce_retry_counts"].get(str_batch, 0) + 1
+                    )
+                    _save()
+                raise ValueError(f"Model crashed during REDUCE batch {batch_idx + 1}/{num_batches}: {e}")
 
             print(f"[DEBUG] REDUCE batch {batch_idx + 1} streaming complete: {len(batch_response_text)} chars")
             cleaned_batch, success = remove_thinking_tokens(batch_response_text)
@@ -308,11 +335,20 @@ def condense_content(
 
                 print(f"[DEBUG] Streaming final consolidation...")
                 consolidation_text = ""
-                for streamed_chunk in current_model.stream(consolidation_input):
-                    if hasattr(streamed_chunk, 'content'):
-                        consolidation_text += streamed_chunk.content
-                    else:
-                        consolidation_text += str(streamed_chunk)
+                try:
+                    for streamed_chunk in current_model.stream(consolidation_input):
+                        if hasattr(streamed_chunk, 'content'):
+                            consolidation_text += streamed_chunk.content
+                        else:
+                            consolidation_text += str(streamed_chunk)
+                except Exception as e:
+                    print(f"[ERROR] Model crashed during final consolidation: {e}")
+                    if _has_checkpoint:
+                        checkpoint["consolidation_retries"] = (
+                            checkpoint.get("consolidation_retries", 0) + 1
+                        )
+                        _save()
+                    raise ValueError(f"Model crashed during final consolidation: {e}")
 
                 consolidated, success = remove_thinking_tokens(consolidation_text)
                 if not success:

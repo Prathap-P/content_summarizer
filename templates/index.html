@@ -771,12 +771,12 @@
         </div>
     </div>
     
-    <!-- Retry Failed Telegrams Button -->
+    <!-- Retry All Failed Button -->
     <div class="retry-section" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
         <button 
             id="retryFailedBtn" 
             class="btn btn-warning" 
-            onclick="retryFailedTelegrams()"
+            onclick="retryAllFailed()"
             style="
                 padding: 15px 25px;
                 font-size: 16px;
@@ -792,7 +792,7 @@
             onmouseover="this.style.background='#fb8c00'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(255, 152, 0, 0.4)'"
             onmouseout="this.style.background='#ff9800'; this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(255, 152, 0, 0.3)'"
         >
-            🔄 Retry Failed Telegrams
+            🔄 Retry All Failed
         </button>
     </div>
     
@@ -1607,58 +1607,100 @@
             }
         }
         
-        async function retryFailedTelegrams() {
+        async function retryAllFailed() {
             const btn = document.getElementById('retryFailedBtn');
             const originalText = btn.textContent;
-            
+
             try {
-                // Disable button and show loading state
                 btn.disabled = true;
                 btn.textContent = '⏳ Retrying...';
                 btn.style.background = '#9e9e9e';
-                
-                console.log('[RETRY] Starting retry of failed telegrams...');
-                
+
+                // --- Step 1: Re-queue failed URLs from all FailedLists ---
+                const categories = ['tech', 'social', 'science'];
+                const seen = new Set();
+                const reQueued = [];
+
+                for (const category of categories) {
+                    const failedEl = document.getElementById(`${category}FailedList`);
+                    const lines = failedEl.value.split('\n').filter(l => l.trim());
+
+                    for (const line of lines) {
+                        // Format: [A] https://url - Error: message  OR  [T] https://url - Error: message
+                        const match = line.match(/^\[(A|T)\]\s+(https?:\/\/\S+)\s*-\s*Error:/);
+                        if (!match) continue;
+
+                        const tag = match[1];       // 'A' or 'T'
+                        const url = match[2];       // bare URL (stops at first whitespace)
+                        const fetch_mode = tag === 'A' ? 'audio' : 'transcript';
+
+                        // Dedup within this retry action: same url+category+fetch_mode once only
+                        const key = `${url}|${category}|${fetch_mode}`;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+
+                        // Push into the correct queue textarea
+                        const queueEl = tag === 'A'
+                            ? document.getElementById(`${category}AudioQueueList`)
+                            : document.getElementById(`${category}QueueList`);
+
+                        const existing = queueEl.value.trim();
+                        queueEl.value = existing ? `${existing}\n${url}` : url;
+
+                        reQueued.push({ url, category, fetch_mode });
+                        console.log(`[RETRY] Re-queued [${tag}] ${url} → ${category} queue`);
+                    }
+                }
+
+                // Persist re-queued URLs immediately — before network call so they
+                // survive even if the Telegram retry fetch fails or the page reloads.
+                if (reQueued.length > 0) {
+                    saveQueuesToStorage();
+                    console.log(`[RETRY] ${reQueued.length} URL(s) re-queued and persisted to localStorage`);
+                }
+
+                // --- Step 2: Retry Telegram backup files (existing logic) ---
+                console.log('[RETRY] Calling /retry_failed_telegrams for backup files...');
                 const response = await fetch('/retry_failed_telegrams', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'Content-Type': 'application/json' }
                 });
-                
+
                 const data = await response.json();
-                
-                if (data.success) {
-                    console.log('[RETRY] Result:', data);
-                    
-                    if (data.total === 0) {
-                        showStatus('No backup files found to retry', 'info');
-                    } else {
-                        // Build summary message
-                        const parts = [];
-                        if (data.sent > 0) parts.push(`✅ Sent: ${data.sent}`);
-                        if (data.skipped > 0) parts.push(`⏭️ Skipped: ${data.skipped}`);
-                        if (data.failed > 0) parts.push(`❌ Failed: ${data.failed}`);
-                        
-                        const summary = parts.join(', ');
-                        showStatus(`Retry complete - ${summary}`, data.failed > 0 ? 'error' : 'success');
-                        
-                        // Log details to console
-                        if (data.skipped_files.length > 0) {
-                            console.log('[RETRY] Skipped files:', data.skipped_files);
-                        }
-                        if (data.failed_files.length > 0) {
-                            console.log('[RETRY] Failed files:', data.failed_files);
-                        }
-                    }
+
+                // --- Step 3: Build unified toast ---
+                if (reQueued.length === 0 && data.total === 0) {
+                    showStatus('Nothing to retry', 'info');
                 } else {
-                    showStatus(data.error || 'Failed to retry telegrams', 'error');
+                    const parts = [];
+
+                    if (reQueued.length > 0) {
+                        parts.push(`🔁 ${reQueued.length} URL(s) re-queued`);
+                    }
+
+                    if (data.total > 0) {
+                        const telegramParts = [];
+                        if (data.sent > 0)    telegramParts.push(`✅ Sent: ${data.sent}`);
+                        if (data.skipped > 0) telegramParts.push(`⏭️ Skipped: ${data.skipped}`);
+                        if (data.failed > 0)  telegramParts.push(`❌ Failed: ${data.failed}`);
+                        parts.push(`Telegrams — ${telegramParts.join(', ')}`);
+                    }
+
+                    const hasError = data.failed > 0 || !data.success;
+                    showStatus(parts.join(' | '), hasError ? 'error' : 'success');
+
+                    if (data.skipped_files && data.skipped_files.length > 0) {
+                        console.log('[RETRY] Skipped backup files:', data.skipped_files);
+                    }
+                    if (data.failed_files && data.failed_files.length > 0) {
+                        console.log('[RETRY] Failed backup files:', data.failed_files);
+                    }
                 }
+
             } catch (error) {
                 console.error('[RETRY] Error:', error);
-                showStatus('Error: ' + error.message, 'error');
+                showStatus('Retry error: ' + error.message, 'error');
             } finally {
-                // Re-enable button
                 btn.disabled = false;
                 btn.textContent = originalText;
                 btn.style.background = '#ff9800';
