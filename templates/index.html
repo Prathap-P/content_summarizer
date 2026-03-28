@@ -1505,6 +1505,16 @@
         
         // Move URL to failed list
         function moveToFailed(url, error, category, fetch_mode) {
+            // Dedup: if already in the failed list, just update the error message in-place
+            const existingIdx = failedData[category].findIndex(
+                i => i.url === url && i.fetch_mode === fetch_mode
+            );
+            if (existingIdx !== -1) {
+                failedData[category][existingIdx].error = error;
+                saveQueuesToStorage();
+                renderFailedCards(category);
+                return;
+            }
             const uid = Math.random().toString(36).slice(2, 9);
             failedData[category].push({ uid, url, error, fetch_mode, title: null });
             saveQueuesToStorage();
