@@ -19,7 +19,11 @@ load_dotenv()
 
 from main import read_website_content
 from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id
-from whisper_transcriber import get_transcript_via_whisper
+from audio_config import ASR_BACKEND, TTS_BACKEND
+if ASR_BACKEND == "qwen_omni":
+    from qwen_omni_backend import get_transcript_via_qwen as get_transcript_via_whisper
+else:
+    from whisper_transcriber import get_transcript_via_whisper
 from system_prompts import news_explainer_system_message, subject_matter_expert_prompt
 from condenser_service import condense_content
 from condensation_cache import (
@@ -33,12 +37,17 @@ from condensation_cache import (
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
-from kokoro_tts import generate_audio, create_audio_file
+if TTS_BACKEND == "qwen_omni":
+    from qwen_omni_backend import generate_audio_qwen as generate_audio
+    from kokoro_tts import create_audio_file
+else:
+    from kokoro_tts import generate_audio, create_audio_file
 from llm_models import get_model
 from utils import remove_thinking_tokens, create_backup_file, parse_backup_file, list_backup_files
 from email_sender import send_email_with_audio, send_email_with_attachments
 from telegram_sender import send_telegram_with_audio, send_telegram_with_attachments
 
+print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] ASR backend: {ASR_BACKEND} | TTS backend: {TTS_BACKEND}")
 
 app = Flask(__name__)
 
@@ -235,21 +244,21 @@ def load_content():
                 video_id = extract_video_id(url)
 
                 if fetch_mode == 'audio':
-                    # Audio queue: bypass transcript API, go straight to Whisper.
+                    # Audio queue: bypass transcript API, go straight to ASR backend.
                     # download_audio() reuses a cached mp3 if it already exists on disk,
                     # so a crash mid-transcription does not force a full re-download.
                     print(
                         f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
-                        f"Audio queue: forcing Whisper for video: {video_id}"
+                        f"Audio queue: transcribing via {ASR_BACKEND} for video: {video_id}"
                     )
                     raw_content = get_transcript_via_whisper(url, video_id)
                     if raw_content.startswith("Error:"):
-                        print(f"[ERROR] Whisper transcription failed: {raw_content}")
+                        print(f"[ERROR] ASR transcription failed: {raw_content}")
                         return jsonify({'error': raw_content, 'success': False}), 400
                     checkpoint["raw_content"] = raw_content
-                    checkpoint["source"] = "whisper"
+                    checkpoint["source"] = ASR_BACKEND
                     save_checkpoint(checkpoint_key, checkpoint)
-                    print(f"[SUCCESS] Whisper transcript obtained: {len(raw_content)} chars")
+                    print(f"[SUCCESS] {ASR_BACKEND} transcript obtained: {len(raw_content)} chars")
                 else:
                     # Transcript queue: try transcript API (manual transcripts only),
                     # fall back to Whisper automatically inside get_youtube_transcript().

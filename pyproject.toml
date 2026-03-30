@@ -201,8 +201,8 @@ dependencies = [
     "tinysegmenter==0.3",
     "tldextract==5.3.1",
     "tokenizers==0.22.2",
-    "torch==2.9.1",
-    "torchaudio==2.9.1",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
     "tornado==6.5.4",
     "tqdm==4.67.1",
     "traitlets==5.14.3",
@@ -228,8 +228,15 @@ dependencies = [
     "youtube-transcript-api==1.2.3",
     "yt-dlp",
     "mlx-whisper",
+    "accelerate==1.13.0",
+    "qwen-omni-utils==0.0.9",
+    "soxr==1.0.0",
+    "torchvision==0.26.0",
     "zipp==3.23.0",
 ]
+
+[tool.setuptools]
+packages = []
 
 [tool.uv.sources]
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

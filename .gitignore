@@ -12,3 +12,4 @@ kokoro_outputs/
 backup_content/
 condensation_cache/
 yt_audio/
+/website_summarizer.egg-info/
