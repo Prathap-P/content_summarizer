@@ -224,6 +224,7 @@ Use structured `[LEVEL]` prefixes consistently. Do not use the `logging` module.
 | `KOKORO_LANG_CODE` | Kokoro language code (default: `a` = American English) |
 | `KOKORO_VOICE` | Kokoro TTS voice name (default: `af_sarah`) |
 | `WHISPER_MODEL_ID` | Whisper model ID (default: `mlx-community/whisper-large-v3-mlx`) |
+| `YTDLP_COOKIES_BROWSER` | Browser yt-dlp reads cookies from for auto-translated captions (default: `safari`). Set to `none` to disable. Valid: `safari`, `chrome`, `firefox`, `chromium`, `edge` |
 
 Load with `load_dotenv()` at module top, then `os.getenv("KEY")`. Never hardcode credentials.
 

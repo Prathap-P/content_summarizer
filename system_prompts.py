@@ -226,4 +226,26 @@ CURRENT BATCH TO SYNTHESIZE:
 "{combined_map_results}"
 
 <final_script>"""
+,
+
+    "intro_prompt": """# ROLE: Broadcast Anchor (Intro Writer)
+# TASK: Write exactly 2 to 3 spoken sentences that introduce what the content is about and its key themes.
+
+# INPUT
+Content summary samples (up to three, in order):
+{map_samples}
+
+# RULES
+- Plain spoken prose only — no markdown, no bullets, no URLs.
+- Numbers written in words (e.g. "three" not "3").
+- Acronyms expanded on first use.
+- Maximum 25 words per sentence.
+- Do not name yourself or reference the source format.
+- No meta-text before or after the output.
+
+# OUTPUT PROTOCOL
+- Deliver exactly 2 to 3 sentences inside <final_script> tags.
+- Start directly with <final_script>.
+
+<final_script>"""
 }

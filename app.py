@@ -1,4 +1,5 @@
 import json
+import random
 from datetime import datetime
 
 from flask import Flask, render_template, request, jsonify, send_file, stream_with_context, Response
@@ -24,7 +25,7 @@ if ASR_BACKEND == "qwen_omni":
     from qwen_omni_backend import get_transcript_via_qwen as get_transcript_via_whisper
 else:
     from whisper_transcriber import get_transcript_via_whisper
-from system_prompts import news_explainer_system_message, subject_matter_expert_prompt
+from system_prompts import news_explainer_system_message, subject_matter_expert_prompt, map_reduce_custom_prompts
 from condenser_service import condense_content
 from condensation_cache import (
     compute_cache_key,
@@ -301,6 +302,40 @@ def load_content():
             condensed_word_count = len(condensed_content.split())
 
             # -----------------------------------------------------------
+            # Step 2b: Generate spoken intro from MAP summaries
+            # -----------------------------------------------------------
+            intro_text = ""
+            try:
+                if checkpoint.get("intro_text"):
+                    intro_text = checkpoint["intro_text"]
+                    print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Intro loaded from cache")
+                else:
+                    map_results: dict = checkpoint.get("map_results", {})
+                    valid_keys = [k for k in map_results if map_results[k]]
+                    if valid_keys:
+                        sorted_keys = sorted(valid_keys, key=int)
+                        sample_keys = sorted(random.sample(sorted_keys, min(3, len(sorted_keys))), key=int)
+                        map_samples = "\n\n".join(map_results[k] for k in sample_keys)
+                        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Generating intro ({len(sample_keys)} MAP samples)...")
+                        response = current_model.invoke(
+                            map_reduce_custom_prompts["intro_prompt"].format(map_samples=map_samples)
+                        )
+                        intro_text, tags_found = remove_thinking_tokens(response.content)
+                        if not tags_found:
+                            print(f"[WARNING] Intro tags missing — continuing without intro")
+                            intro_text = ""
+                        else:
+                            checkpoint["intro_text"] = intro_text
+                            save_checkpoint(checkpoint_key, checkpoint)
+                    else:
+                        print(f"[WARNING] No MAP results in checkpoint — skipping intro")
+            except Exception as e:
+                print(f"[WARNING] Intro generation failed: {e} — continuing without intro")
+                intro_text = ""
+
+            tts_input = (intro_text + "\n\n" + condensed_content).strip() if intro_text else condensed_content
+
+            # -----------------------------------------------------------
             # Step 3: Generate audio (resume if already cached)
             # -----------------------------------------------------------
             audio_file = None
@@ -312,7 +347,7 @@ def load_content():
             audio_start_time = time.time()
 
             try:
-                audio = generate_audio(condensed_content)
+                audio = generate_audio(tts_input)
                 audio_file_path = create_audio_file(audio)
                 audio_file = os.path.basename(audio_file_path)
                 # Save audio path BEFORE building the response to avoid losing it on crash
