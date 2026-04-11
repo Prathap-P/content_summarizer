@@ -11,5 +11,6 @@ kokoro_outputs/
 .DS_Store
 backup_content/
 condensation_cache/
+translation_cache/
 yt_audio/
 /website_summarizer.egg-info/
