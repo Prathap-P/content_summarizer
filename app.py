@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from main import read_website_content
-from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id
+from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id, purge_expired_translation_cache
 from audio_config import ASR_BACKEND, TTS_BACKEND
 if ASR_BACKEND == "qwen_omni":
     from qwen_omni_backend import get_transcript_via_qwen as get_transcript_via_whisper
@@ -1193,4 +1193,5 @@ def text_to_audio():
 
 if __name__ == '__main__':
     purge_expired_checkpoints()
+    purge_expired_translation_cache()
     app.run(host="0.0.0.0", port=5000)
