@@ -21,10 +21,6 @@ load_dotenv()
 from main import read_website_content
 from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id, purge_expired_translation_cache
 from audio_config import ASR_BACKEND, TTS_BACKEND
-if ASR_BACKEND == "qwen_omni":
-    from qwen_omni_backend import get_transcript_via_qwen as get_transcript_via_whisper
-else:
-    from whisper_transcriber import get_transcript_via_whisper
 from system_prompts import news_explainer_system_message, subject_matter_expert_prompt, map_reduce_custom_prompts
 from condenser_service import condense_content
 from condensation_cache import (
@@ -38,11 +34,8 @@ from condensation_cache import (
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
-if TTS_BACKEND == "qwen_omni":
-    from qwen_omni_backend import generate_audio_qwen as generate_audio
-    from kokoro_tts import create_audio_file
-else:
-    from kokoro_tts import generate_audio, create_audio_file
+from process_runner import run_in_subprocess
+import model_worker
 from llm_models import get_model
 from utils import remove_thinking_tokens, create_backup_file, parse_backup_file, list_backup_files
 from email_sender import send_email_with_audio, send_email_with_attachments
@@ -252,7 +245,7 @@ def load_content():
                         f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
                         f"Audio queue: transcribing via {ASR_BACKEND} for video: {video_id}"
                     )
-                    raw_content = get_transcript_via_whisper(url, video_id)
+                    raw_content = run_in_subprocess(model_worker.asr_worker, url, video_id)
                     if raw_content.startswith("Error:"):
                         print(f"[ERROR] ASR transcription failed: {raw_content}")
                         return jsonify({'error': raw_content, 'success': False}), 400
@@ -347,8 +340,7 @@ def load_content():
             audio_start_time = time.time()
 
             try:
-                audio = generate_audio(tts_input)
-                audio_file_path = create_audio_file(audio)
+                audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "")
                 audio_file = os.path.basename(audio_file_path)
                 # Save audio path BEFORE building the response to avoid losing it on crash
                 checkpoint["audio_file_path"] = str(audio_file_path)
@@ -938,8 +930,7 @@ def chat():
                 print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for response ({len(response_text)} chars)...")
                 audio_start_time = time.time()
                 
-                audio = generate_audio(response_text)
-                audio_file_path = create_audio_file(audio)
+                audio_file_path = run_in_subprocess(model_worker.tts_worker, response_text, "")
                 audio_file = os.path.basename(audio_file_path)
                 
                 audio_time = time.time() - audio_start_time
@@ -1049,8 +1040,7 @@ def stream_chat():
                     print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for response ({len(complete_response_text)} chars)...")
                     audio_start_time = time.time()
 
-                    audio = generate_audio(complete_response_text)
-                    audio_file_path = create_audio_file(audio)
+                    audio_file_path = run_in_subprocess(model_worker.tts_worker, complete_response_text, "")
                     audio_file = os.path.basename(audio_file_path)
 
                     audio_time = time.time() - audio_start_time
@@ -1129,50 +1119,8 @@ def text_to_audio():
         
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] text_to_audio: Converting {len(text)} chars to audio")
         print(f"[DEBUG] Text preview: {text[:100]}...")
-        
-        # For very large text, split into chunks
-        MAX_CHARS = 10000
-        
-        if len(text) > MAX_CHARS:
-            print(f"[WARNING] Text exceeds {MAX_CHARS} chars, splitting into chunks...")
-            sentences = text.replace('\n', ' ').split('. ')
-            chunks = []
-            current_chunk = ""
-            
-            for sentence in sentences:
-                if len(current_chunk) + len(sentence) < MAX_CHARS:
-                    current_chunk += sentence + ". "
-                else:
-                    if current_chunk:
-                        chunks.append(current_chunk.strip())
-                    current_chunk = sentence + ". "
-            
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            
-            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Split into {len(chunks)} chunks")
-            
-            import numpy as np
-            audio_segments = []
-            
-            for idx, chunk in enumerate(chunks, 1):
-                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Processing chunk {idx}/{len(chunks)} ({len(chunk)} chars)...")
-                chunk_audio = generate_audio(chunk)
-                print(f"[DEBUG] Chunk {idx} audio shape: {chunk_audio.shape}")
-                audio_segments.append(chunk_audio)
-            
-            audio = np.concatenate(audio_segments)
-            print(f"[SUCCESS] All chunks processed and concatenated: {audio.shape}")
-        else:
-            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio directly (text < {MAX_CHARS} chars)")
-            audio = generate_audio(text)
-            import numpy as np
-            print(f"[DEBUG] Generated audio shape: {audio.shape}, sum: {np.sum(np.abs(audio))}")
-        
-        if audio is None or (hasattr(audio, 'size') and audio.size == 0):
-            raise ValueError("Generated audio is empty")
-        
-        audio_file_path = create_audio_file(audio)
+
+        audio_file_path = run_in_subprocess(model_worker.tts_worker, text, "")
         audio_filename = os.path.basename(audio_file_path)
         
         print(f"[SUCCESS] Audio file created: {audio_filename}")

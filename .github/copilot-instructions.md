@@ -16,7 +16,9 @@ llm_models.py                  # All LLM instances; get_model() factory
 system_prompts.py              # All prompt strings (news, YouTube, map/reduce)
 utils.py                       # remove_thinking_tokens(), backup file helpers
 audio_config.py                # ASR/TTS backend selection via env vars
-kokoro_tts.py                  # generate_audio(), create_audio_file() — Kokoro backend
+process_runner.py              # run_in_subprocess() — spawn-isolated model runner, Semaphore(1)
+model_worker.py                # asr_worker, tts_worker, translate_worker — picklable top-level fns
+kokoro_tts.py                  # generate_audio(), create_audio_file() — Kokoro backend (lazy-loaded)
 qwen_omni_backend.py           # generate_audio_qwen(), get_transcript_via_qwen() — Qwen2.5-Omni backend
 email_sender.py                # send_email_with_audio/attachments
 telegram_sender.py             # send_telegram_with_audio/attachments
@@ -52,24 +54,19 @@ The ASR and TTS backends are configurable via environment variables — no code 
 | `QWEN_OMNI_MODEL_ID` | `Qwen/Qwen2.5-Omni-3B` | Any HF model ID |
 | `QWEN_OMNI_SPEAKER` | `Chelsie` | `Chelsie` (female), `Ethan` (male) |
 
-`app.py` imports the correct backend at startup based on these values:
+`app.py` no longer imports ASR/TTS backends directly. All inference is dispatched via subprocess:
 ```python
-from audio_config import ASR_BACKEND, TTS_BACKEND
-if ASR_BACKEND == "qwen_omni":
-    from qwen_omni_backend import get_transcript_via_qwen as get_transcript_via_whisper
-else:
-    from whisper_transcriber import get_transcript_via_whisper
+from process_runner import run_in_subprocess
+import model_worker
 
-if TTS_BACKEND == "qwen_omni":
-    from qwen_omni_backend import generate_audio_qwen as generate_audio
-    from kokoro_tts import create_audio_file
-else:
-    from kokoro_tts import generate_audio, create_audio_file
+# ASR
+raw_content = run_in_subprocess(model_worker.asr_worker, url, video_id)
+
+# TTS — returns file path string; numpy array never crosses process boundary
+audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "")
 ```
 
-All call sites (`generate_audio()`, `create_audio_file()`, `get_transcript_via_whisper()`) remain unchanged — the aliasing at import time is the entire switching mechanism.
-
-**`create_audio_file()` is always imported from `kokoro_tts`** regardless of `TTS_BACKEND` — it is backend-agnostic (accepts any 24 kHz float32 numpy array and writes a `.wav` file).
+`model_worker.py` reads `ASR_BACKEND` / `TTS_BACKEND` env vars and dispatches to the correct backend inside the subprocess. `audio_config.py` values are still the source of truth — no call-site changes needed to switch backends.
 
 ### Qwen2.5-Omni Backend (`qwen_omni_backend.py`)
 
@@ -92,7 +89,7 @@ All call sites (`generate_audio()`, `create_audio_file()`, `get_transcript_via_w
 - Decode: `processor.batch_decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)` where `ids = output.sequences if hasattr(output, "sequences") else output`
 - Returns plain text string or `"Error: ..."` on failure — same contract as `get_transcript_via_whisper()`.
 
-**Memory management**: both functions release MPS memory via `torch.mps.empty_cache()` in a `finally` block. GPU tensors are explicitly `del`-ed before the `finally` runs so the cache clear is effective.
+**Memory management**: each function runs inside a `spawn` subprocess (via `process_runner.run_in_subprocess`). When the subprocess exits the OS reclaims all memory — MPS buffers, PyTorch allocator, MLX Metal pool — guaranteed. `_release_gpu_memory()` has been removed; `del` of GPU tensors before return is still kept as belt-and-suspenders.
 
 **`process_mm_info`** from `qwen_omni_utils` is imported at module level (not per-call). If the package is missing, an `ImportError` with a clear message is raised at import time.
 
@@ -170,17 +167,14 @@ A single fixed button (bottom-right) handles both retry paths:
 3. Toast shows unified result: `"X URL(s) re-queued | Telegrams — ✅ Sent: N, ❌ Failed: N"`. Shows `"Nothing to retry"` when both paths find nothing.
 - Failed cards are **not** cleared by the retry — use the per-card ↺ Retry or ✕ Dismiss buttons to remove individual items.
 
-### Whisper Memory Management
-`transcribe_audio()` in `whisper_transcriber.py` always releases GPU memory in a `finally` block:
-```python
-finally:
-    gc.collect()
-    if _IS_APPLE_SILICON:          # guarded — no-op on Linux/CUDA
-        mx.metal.clear_cache()     # MLX Metal pool (mlx-whisper)
-```
-This frees ~3 GB of MLX buffers after each transcription.
+### Subprocess Model Isolation
+ASR, TTS, and Translation each run in a dedicated `spawn` subprocess via `process_runner.run_in_subprocess()`. When the subprocess exits, the OS reclaims all memory unconditionally — this is the primary memory management mechanism.
 
-The Qwen Omni backend uses an equivalent pattern with `torch.mps.empty_cache()` (PyTorch MPS pool) instead of `mx.metal.clear_cache()` — the two models use separate Metal memory pools.
+- `process_runner.py`: `run_in_subprocess(fn, *args, **kwargs)` with `multiprocessing.get_context("spawn")` and a `threading.Semaphore(1)` (`_model_lock`) so only one model subprocess is in memory at a time. Blocks indefinitely — no timeout — long videos are legitimate.
+- `model_worker.py`: top-level picklable functions (`asr_worker`, `tts_worker`, `translate_worker`). All model imports are **inside** function bodies — the main Flask process never loads model weights. Each reads env vars via `load_dotenv()` at call time.
+- `tts_worker` writes the `.wav` to disk inside the subprocess and returns the file path string — the numpy audio array never crosses the queue boundary.
+- `kokoro_tts.py` `KPipeline` is lazy-initialised inside `generate_audio()` (was eager at import time — fixed).
+- `whisper_transcriber.py` `mx.metal.clear_cache()` in `finally` is kept as belt-and-suspenders but subprocess exit is the real cleanup.
 
 ### Logging Style
 ```python
@@ -223,6 +217,7 @@ Use structured `[LEVEL]` prefixes consistently. Do not use the `logging` module.
 | `MISTRAL_MODEL_ID` | Mistral model ID (default: `mlx-community/Mistral-7B-Instruct-v0.3-4bit`) |
 | `KOKORO_LANG_CODE` | Kokoro language code (default: `a` = American English) |
 | `KOKORO_VOICE` | Kokoro TTS voice name (default: `af_sarah`) |
+| `KOKORO_SPEED` | Kokoro TTS speed multiplier (default: `1.0`; range `0.5–2.0`). Uses model-level duration scaling — pitch is unaffected. |
 | `WHISPER_MODEL_ID` | Whisper model ID (default: `mlx-community/whisper-large-v3-mlx`) |
 | `YTDLP_COOKIES_BROWSER` | Browser yt-dlp reads cookies from for auto-translated captions (default: `safari`). Set to `none` to disable. Valid: `safari`, `chrome`, `firefox`, `chromium`, `edge` |
 

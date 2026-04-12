@@ -8,7 +8,6 @@ The model is loaded lazily on first use so importing this module at startup
 does not allocate any GPU memory.
 """
 
-import gc
 import platform
 from datetime import datetime
 from pathlib import Path
@@ -37,17 +36,6 @@ _processor = None
 
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
-
-
-def _release_gpu_memory() -> None:
-    gc.collect()
-    if _IS_APPLE_SILICON:
-        try:
-            import torch
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-        except Exception:
-            pass
 
 
 def _get_model():
@@ -98,8 +86,6 @@ def generate_audio_qwen(text: str) -> np.ndarray:
     except Exception as e:
         print(f"[ERROR]   [QWEN_OMNI] TTS generation failed: {e}")
         raise
-    finally:
-        _release_gpu_memory()
     return audio_np
 
 
@@ -157,5 +143,3 @@ def get_transcript_via_qwen(url: str, video_id: str) -> str:
     except Exception as e:
         print(f"[ERROR]   [QWEN_OMNI] Transcription failed: {e}")
         return f"Error: {e}"
-    finally:
-        _release_gpu_memory()

@@ -24,6 +24,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from youtube_transcript_api import YouTubeTranscriptApi
+from process_runner import run_in_subprocess
+import model_worker
 
 # get_transcript_via_whisper is NOT used here — it belongs to the audio-queue
 # path only. Import it from whisper_transcriber directly when needed.
@@ -260,7 +262,7 @@ def get_youtube_transcript(video_link: str) -> str:
         fetched = YouTubeTranscriptApi().fetch(video_id, languages=['hi'])
         hindi_text = " ".join(e.text for e in fetched)
         print(f"[INFO]    [{_ts()}] Hindi transcript fetched: {len(hindi_text):,} chars, translating...")
-        english_text = _translate_hindi_to_english(hindi_text)
+        english_text = run_in_subprocess(model_worker.translate_worker, video_id, hindi_text)
         print(f"[INFO]    [{_ts()}] Translation complete: {len(english_text):,} chars")
         if english_text and cache_key is not None:
             _save_translation_cache(cache_key, english_text)
