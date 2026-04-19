@@ -17,7 +17,7 @@ import numpy as np
 # Constants
 # ---------------------------------------------------------------------------
 
-VOICES = ["neutral_male", "neutral_female"]
+VOICES = ["neutral_male"]
 SAMPLE_RATE = 24000
 MAX_CHUNK_CHARS = 350                            # short chunks prevent autoregressive quality drift
 TARGET_LUFS = -23.0                              # ITU-R BS.1770 integrated loudness target (LUFS)
