@@ -12,6 +12,7 @@ Checkpoint stages (in order):
   1  map_chunks        — content split stored so resume uses identical chunks
   2  map_results[i]    — MAP output per chunk (string keys)
   3  reduce_results[i] — REDUCE output per batch (string keys)
+  3b tts_results[i]   — TTS speech-polish pass output per batch (string keys)
   4  consolidation_result — optional final consolidation output
   5  final_output      — fully condensed text, condensation pipeline done
   6  audio_file_path   — Kokoro TTS output path
@@ -142,6 +143,11 @@ def _fresh_checkpoint(url: str, mode: str, model_key: str, fetch_mode: str = "tr
         "reduce_batches_total": None,
         "reduce_results": {},
         "reduce_retry_counts": {},
+        # Stage 3b — TTS polish results (one per reduce batch, str-keyed)
+        "tts_results": {},
+        "tts_retry_counts": {},
+        # TTS voice selected once per video (voxtral backend only)
+        "tts_voice": "",
         # Stage 4 — consolidation
         "consolidation_result": None,
         "consolidation_retries": 0,

@@ -339,8 +339,17 @@ def load_content():
             )
             audio_start_time = time.time()
 
+            # Select TTS voice once per video and persist to checkpoint for consistent resume
+            tts_voice = checkpoint.get("tts_voice", "") if checkpoint else ""
+            if not tts_voice and TTS_BACKEND == "voxtral":
+                tts_voice = random.choice(["neutral_male", "neutral_female"])
+                if checkpoint:
+                    checkpoint["tts_voice"] = tts_voice
+                    save_checkpoint(checkpoint_key, checkpoint)
+                print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] TTS voice selected: {tts_voice}")
+
             try:
-                audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "")
+                audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "", tts_voice)
                 audio_file = os.path.basename(audio_file_path)
                 # Save audio path BEFORE building the response to avoid losing it on crash
                 checkpoint["audio_file_path"] = str(audio_file_path)
