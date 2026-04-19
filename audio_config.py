@@ -22,9 +22,10 @@ def _parse_kokoro_speed() -> float:
 
 KOKORO_SPEED: float = _parse_kokoro_speed()
 WHISPER_MODEL_ID = os.getenv("WHISPER_MODEL_ID", "mlx-community/whisper-large-v3-mlx")
-FISH_SPEECH_CHECKPOINT_PATH = os.getenv("FISH_SPEECH_CHECKPOINT_PATH", "checkpoints/s1-mini")
+FISH_SPEECH_CHECKPOINT_PATH = os.getenv("FISH_SPEECH_CHECKPOINT_PATH", "checkpoints/fish-speech-1.5")
 FISH_SPEECH_DECODER_CONFIG = os.getenv("FISH_SPEECH_DECODER_CONFIG", "firefly_gan_vq")
-FISH_SPEECH_DECODER_CHECKPOINT = os.getenv("FISH_SPEECH_DECODER_CHECKPOINT", "checkpoints/s1-mini/codec.pth")
+FISH_SPEECH_DECODER_CHECKPOINT = os.getenv("FISH_SPEECH_DECODER_CHECKPOINT", "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth")
 FISH_SPEECH_DEVICE = os.getenv("FISH_SPEECH_DEVICE", "")
 FISH_SPEECH_PRECISION = os.getenv("FISH_SPEECH_PRECISION", "bfloat16")
 FISH_SPEECH_REF_AUDIO = os.getenv("FISH_SPEECH_REF_AUDIO", "")
+VOXTRAL_MODEL_ID = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit")

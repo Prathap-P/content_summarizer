@@ -33,16 +33,22 @@ def asr_worker(url: str, video_id: str) -> str:
     return result
 
 
-def tts_worker(text: str, output_path: str) -> str:
+def tts_worker(text: str, output_path: str, voice: str = "") -> str:
     """Generate TTS audio and save to file in an isolated subprocess.
 
     Reads TTS_BACKEND env var to dispatch to the correct backend.
     Always writes the .wav via kokoro_tts.create_audio_file() and returns
     the file path — the numpy audio array never crosses the queue boundary.
+
+    Args:
+        text: The spoken-word script to synthesise.
+        output_path: Unused; kept for call-site compatibility.
+        voice: Optional voice override for the voxtral backend.  Empty string
+            means "use the backend default".
     """
     load_dotenv()
     backend = os.getenv("TTS_BACKEND", "qwen_omni")
-    print(f"[INFO]    [{_ts()}] [TTS subprocess] Starting, backend={backend}, chars={len(text)}")
+    print(f"[INFO]    [{_ts()}] [TTS subprocess] Starting, backend={backend}, chars={len(text)}, voice={voice!r}")
     from kokoro_tts import create_audio_file
     if backend == "qwen_omni":
         from qwen_omni_backend import generate_audio_qwen as generate_audio
@@ -52,6 +58,10 @@ def tts_worker(text: str, output_path: str) -> str:
         from fish_speech_tts import generate_audio_fish
         audio, sample_rate = generate_audio_fish(text)
         final_path = create_audio_file(audio, sample_rate=sample_rate)
+    elif backend == "voxtral":
+        from voxtral_tts import generate_audio as generate_audio_voxtral
+        audio = generate_audio_voxtral(text, voice=voice if voice else None)
+        final_path = create_audio_file(audio)
     else:
         if backend != "kokoro":
             print(f"[WARNING] [{_ts()}] [TTS subprocess] Unknown TTS_BACKEND={backend!r}, falling back to kokoro")
