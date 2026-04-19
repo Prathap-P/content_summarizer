@@ -19,9 +19,10 @@ import numpy as np
 
 VOICES = ["neutral_male", "neutral_female"]
 SAMPLE_RATE = 24000
-MAX_CHUNK_CHARS = 800
+MAX_CHUNK_CHARS = 350                            # short chunks prevent autoregressive quality drift
 LEADING_TRIM_SAMPLES = int(0.5 * SAMPLE_RATE)   # 500ms — trims leading noise burst (mlx-audio upstream bug)
-TARGET_RMS = 0.08                                # ≈ -22 dBFS — normalize per-chunk volume
+TRAILING_TRIM_SAMPLES = int(0.3 * SAMPLE_RATE)  # 300ms — trims trailing artifacts at generation end
+TARGET_LUFS = -23.0                              # ITU-R BS.1770 integrated loudness target (LUFS)
 INTER_CHUNK_SILENCE_MS = 400                     # silence gap between stitched chunks (ms)
 
 # ---------------------------------------------------------------------------
@@ -113,6 +114,38 @@ def _crossfade(seg1: np.ndarray, seg2: np.ndarray, overlap_ms: int = 50) -> np.n
     return np.concatenate([seg1[:-overlap], blended, seg2[overlap:]])
 
 
+def _normalize_loudness(audio: np.ndarray) -> np.ndarray:
+    """Normalize audio to TARGET_LUFS using ITU-R BS.1770 integrated loudness.
+
+    Falls back to RMS normalization (-23 dBFS ≈ 0.07 RMS) when the chunk is
+    too short for pyloudnorm's 400ms minimum measurement window.
+    """
+    import pyloudnorm as pyln  # heavy import — inside function body; installed as mlx-audio dep
+
+    _FALLBACK_RMS = 0.07  # ≈ -23 dBFS, matches TARGET_LUFS
+    _MIN_LUFS_SAMPLES = int(0.4 * SAMPLE_RATE)  # pyloudnorm requires at least 400ms
+
+    if len(audio) < _MIN_LUFS_SAMPLES:
+        # Too short for integrated loudness — use RMS fallback
+        rms = float(np.sqrt(np.mean(audio ** 2))) + 1e-8
+        return audio * (_FALLBACK_RMS / rms)
+
+    try:
+        meter = pyln.Meter(SAMPLE_RATE)
+        measured = meter.integrated_loudness(audio.astype(np.float64))
+        if not np.isfinite(measured) or measured < -70.0:
+            # Measurement unreliable (silence or near-silence) — RMS fallback
+            rms = float(np.sqrt(np.mean(audio ** 2))) + 1e-8
+            return audio * (_FALLBACK_RMS / rms)
+        normalized = pyln.normalize.loudness(audio.astype(np.float64), measured, TARGET_LUFS)
+        # Clip to [-1, 1] to prevent downstream clipping in WAV writer
+        return np.clip(normalized, -1.0, 1.0).astype(np.float32)
+    except Exception:
+        # pyloudnorm failed for any reason — safe RMS fallback
+        rms = float(np.sqrt(np.mean(audio ** 2))) + 1e-8
+        return (audio * (_FALLBACK_RMS / rms)).astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -159,9 +192,13 @@ def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
         if len(chunk_audio) > LEADING_TRIM_SAMPLES + SAMPLE_RATE:
             chunk_audio = chunk_audio[LEADING_TRIM_SAMPLES:]
 
-        # Normalize per-chunk volume to prevent loud/quiet jumps across chunks
-        rms = np.sqrt(np.mean(chunk_audio ** 2)) + 1e-8
-        chunk_audio = chunk_audio * (TARGET_RMS / rms)
+        # Trim trailing artifacts (model degrades at generation end)
+        if len(chunk_audio) > TRAILING_TRIM_SAMPLES + SAMPLE_RATE:
+            chunk_audio = chunk_audio[:-TRAILING_TRIM_SAMPLES]
+
+        # Normalize per-chunk loudness to ITU-R BS.1770 target (-23 LUFS)
+        # Falls back to RMS normalization if chunk is too short for integrated loudness measurement.
+        chunk_audio = _normalize_loudness(chunk_audio)
 
         segments.append(chunk_audio)
 
