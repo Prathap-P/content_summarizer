@@ -20,8 +20,6 @@ import numpy as np
 VOICES = ["neutral_male", "neutral_female"]
 SAMPLE_RATE = 24000
 MAX_CHUNK_CHARS = 350                            # short chunks prevent autoregressive quality drift
-LEADING_TRIM_SAMPLES = int(0.5 * SAMPLE_RATE)   # 500ms — trims leading noise burst (mlx-audio upstream bug)
-TRAILING_TRIM_SAMPLES = int(0.3 * SAMPLE_RATE)  # 300ms — trims trailing artifacts at generation end
 TARGET_LUFS = -23.0                              # ITU-R BS.1770 integrated loudness target (LUFS)
 INTER_CHUNK_SILENCE_MS = 400                     # silence gap between stitched chunks (ms)
 
@@ -153,7 +151,7 @@ def _normalize_loudness(audio: np.ndarray) -> np.ndarray:
 def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
     """Generate TTS audio from text using a randomly selected Voxtral voice.
 
-    Splits long text into ≤800-char chunks, generates each chunk separately,
+    Splits long text into ≤350-char chunks, generates each chunk separately,
     stitches with 400ms silence gaps and 50ms crossfades, and returns a single
     24 kHz float32 numpy array — same contract as kokoro_tts.generate_audio().
 
@@ -187,17 +185,7 @@ def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
 
         chunk_audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
 
-        # Trim leading noise burst (mlx-audio upstream bug: repeated semantic codes in first ~200-600ms)
-        # Guard: only trim when chunk is long enough that >1s of content remains after trimming.
-        if len(chunk_audio) > LEADING_TRIM_SAMPLES + SAMPLE_RATE:
-            chunk_audio = chunk_audio[LEADING_TRIM_SAMPLES:]
-
-        # Trim trailing artifacts (model degrades at generation end)
-        if len(chunk_audio) > TRAILING_TRIM_SAMPLES + SAMPLE_RATE:
-            chunk_audio = chunk_audio[:-TRAILING_TRIM_SAMPLES]
-
         # Normalize per-chunk loudness to ITU-R BS.1770 target (-23 LUFS)
-        # Falls back to RMS normalization if chunk is too short for integrated loudness measurement.
         chunk_audio = _normalize_loudness(chunk_audio)
 
         segments.append(chunk_audio)
