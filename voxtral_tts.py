@@ -19,9 +19,9 @@ import numpy as np
 
 VOICES = ["neutral_male"]
 SAMPLE_RATE = 24000
-MAX_CHUNK_CHARS = 350                            # short chunks prevent autoregressive quality drift
+MAX_CHUNK_CHARS = 500                            # short chunks prevent autoregressive quality drift
 TARGET_LUFS = -23.0                              # ITU-R BS.1770 integrated loudness target (LUFS)
-INTER_CHUNK_SILENCE_MS = 400                     # silence gap between stitched chunks (ms)
+INTER_CHUNK_SILENCE_MS = 250                     # silence gap between stitched chunks (ms)
 
 # ---------------------------------------------------------------------------
 # Lazy model singleton
@@ -151,8 +151,8 @@ def _normalize_loudness(audio: np.ndarray) -> np.ndarray:
 def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
     """Generate TTS audio from text using a randomly selected Voxtral voice.
 
-    Splits long text into ≤350-char chunks, generates each chunk separately,
-    stitches with 400ms silence gaps and 50ms crossfades, and returns a single
+    Splits long text into ≤500-char chunks, generates each chunk separately,
+    stitches with 250ms silence gaps and 50ms crossfades, and returns a single
     24 kHz float32 numpy array — same contract as kokoro_tts.generate_audio().
 
     Args:
