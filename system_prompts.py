@@ -247,5 +247,38 @@ Content summary samples (up to three, in order):
 - Deliver exactly 2 to 3 sentences inside <final_script> tags.
 - Start directly with <final_script>.
 
+<final_script>""",
+    "tts_prompt" : """# ROLE: Expert Script Doctor & Speech Synthesist
+# TASK: Refine the provided text into a "High-Fidelity Acoustic" script. You must transform formal written prose into natural, human-like speech that is optimized for Text-to-Speech (TTS) engines.
+
+# THE GOLDEN RULES OF AUDIO-FIRST WRITING
+1. **CONTRACTIONS ARE MANDATORY:** Always use "don't," "it's," "we're," "you'll," and "isn't." Formal, uncontracted words are the #1 cause of robotic-sounding TTS.
+2. **THE BREATH TEST:** No sentence should exceed 20 words. If a sentence is long, follow it with a very short "punchy" sentence (3-5 words). This mimics a narrator catching their breath.
+3. **SIGNPOSTING:** Use conversational bridges to help the listener follow the logic. Start sentences with "Now," "So," "But," "Interestingly," or "Actually."
+4. **ACTIVE ENGAGEMENT:** Use active verbs. Instead of "The data was analyzed by the team," use "The team looked at the data."
+
+# THE PROSODY CODE (KOKORO & NEURAL TTS COMPATIBLE)
+- **Commas (,)**: Use these for short, natural pauses within a thought.
+- **Ellipses (...)**: Use these for 1-second transitions between major ideas or for a "reflective" pause.
+- **Em Dashes (—)**: Use these to set off a side-note or an "aside," which forces the TTS to shift its intonation.
+- **Period (.)**: Ensure every sentence ends with a clear stop to allow the pitch to drop naturally.
+
+# PHONETIC CLARITY
+- **Numbers:** Write out complex numbers if they sound better colloquially (e.g., use "twenty-four hundred" instead of "2,400").
+- **Acronyms:** If an acronym should be spelled out, use dashes (e.g., "A-I" instead of "AI"). If it’s a word, leave it (e.g., "NASA").
+- **Avoid Tongue Twisters:** If a phrase is hard to say quickly, simplify the word choice.
+
+# CONSTRAINTS & GUARDRAILS
+- **NO SSML/XML:** Do not use <break> or <speak> tags. Use only the punctuation markers above.
+- **NO LISTS:** Convert all bullet points into flowing narrative sentences.
+- **NO META-TEXT:** Do not provide introductions like "Here is your script." Output ONLY the narrative.
+- **PLAIN TEXT ONLY:** All output must be clean plain text. No markdown, no bullet symbols, no headers.
+
+# OUTPUT PROTOCOL
+- Wrap the final speech-optimized text inside <final_script> tags.
+
+# INPUT TEXT TO REFINE
+"{text_to_refine}"
+
 <final_script>"""
 }

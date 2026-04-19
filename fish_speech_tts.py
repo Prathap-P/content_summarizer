@@ -1,4 +1,4 @@
-"""Fish Speech S1-mini TTS backend.
+"""Fish Speech 1.5 TTS backend.
 
 Runs inside a spawn subprocess — never imported in the main Flask process.
 All fish_speech.* imports are inside function bodies for subprocess safety.
@@ -30,14 +30,13 @@ def _get_engine():
 
     import torch
     from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
-    from fish_speech.models.vqgan.inference import load_model as load_decoder_model
+    from fish_speech.models.vqgan.inference import load_model as load_codec
     from fish_speech.inference_engine import TTSInferenceEngine
 
-    checkpoint_path = os.getenv("FISH_SPEECH_CHECKPOINT_PATH", "checkpoints/s1-mini")
-    decoder_config = os.getenv("FISH_SPEECH_DECODER_CONFIG", "firefly_gan_vq")
+    checkpoint_path = os.getenv("FISH_SPEECH_CHECKPOINT_PATH", "checkpoints/fish-speech-1.5")
     decoder_checkpoint = os.getenv(
         "FISH_SPEECH_DECODER_CHECKPOINT",
-        "checkpoints/s1-mini/firefly-gan-vq-fsq-8x1024-21hz-generator.pth",
+        "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth",
     )
     precision_str = os.getenv("FISH_SPEECH_PRECISION", "bfloat16")
     device_str = os.getenv("FISH_SPEECH_DEVICE", "")
@@ -68,15 +67,16 @@ def _get_engine():
         compile=False,  # torch.compile unsupported on macOS; safe on all platforms
     )
 
-    decoder_model = load_decoder_model(
-        config_name=decoder_config,
-        checkpoint_path=decoder_checkpoint,
+    config_name = os.getenv("FISH_SPEECH_DECODER_CONFIG", "firefly_gan_vq")
+    codec = load_codec(
+        config_name=config_name,
+        checkpoint_path=str(decoder_checkpoint),
         device=device_str,
     )
 
     _engine = TTSInferenceEngine(
         llama_queue=llama_queue,
-        decoder_model=decoder_model,
+        decoder_model=codec,
         precision=precision,
         compile=False,
     )
@@ -86,60 +86,79 @@ def _get_engine():
 
 
 def generate_audio_fish(text: str) -> tuple[np.ndarray, int]:
-    """Generate audio from text using Fish Speech S1-mini.
+    """Generate audio from text using Fish Speech 1.5.
 
     Returns:
         tuple[np.ndarray, int]: (float32 audio array, sample_rate in Hz)
 
     Raises:
         RuntimeError: if Fish Speech inference returns an error result.
+        ValueError: if inference produces no audio chunks.
     """
     load_dotenv()
 
-    from fish_speech.utils.schema import ServeTTSRequest
+    from fish_speech.utils.schema import ServeReferenceAudio, ServeTTSRequest
 
     ref_audio_path = os.getenv("FISH_SPEECH_REF_AUDIO", "")
+    if ref_audio_path and not os.path.exists(ref_audio_path):
+        print(f"[WARNING] [{_ts()}] [FISH_SPEECH] FISH_SPEECH_REF_AUDIO not found: {ref_audio_path!r} — skipping")
+        ref_audio_path = ""
+
+    references = []
+    if ref_audio_path:
+        with open(ref_audio_path, "rb") as f:
+            ref_bytes = f.read()
+        references = [ServeReferenceAudio(audio=ref_bytes, text="")]
+
+    req = ServeTTSRequest(
+        text=text,
+        references=references,
+        format="wav",
+        seed=42,
+        use_memory_cache="on",
+        top_p=0.8,
+        temperature=0.8,
+        repetition_penalty=1.1,
+        max_new_tokens=1024,
+    )
 
     engine = _get_engine()
 
-    req_kwargs = dict(text=text, streaming=False)
-    if ref_audio_path:
-        from fish_speech.inference_engine.reference_loader import ServeReferenceAudio
-        with open(ref_audio_path, "rb") as f:
-            ref_bytes = f.read()
-        req_kwargs["references"] = [ServeReferenceAudio(audio=ref_bytes, text="")]
-
-    req = ServeTTSRequest(**req_kwargs)
-
     print(f"[INFO]    [{_ts()}] [FISH_SPEECH] Generating audio, chars={len(text)}")
 
-    audio_array = None
+    # Collect all audio chunks — "final" code never fires in Fish Speech 1.5;
+    # instead every chunk that has audio attached is a valid piece to concatenate.
+    chunks: list[np.ndarray] = []
+    sample_rate = 44100
 
     for result in engine.inference(req):
         if result.code == "error":
             print(f"[ERROR]   [{_ts()}] [FISH_SPEECH] Inference error: {result.error}")
             raise RuntimeError(f"[FISH_SPEECH] Inference error: {result.error}")
-        if result.code == "final":
-            sample_rate, audio_array = result.audio
-            break
+        if result.audio is not None:
+            sr, arr = result.audio
+            sample_rate = sr
+            chunks.append(arr)
 
-    if audio_array is None:
-        print(f"[ERROR]   [{_ts()}] [FISH_SPEECH] No audio produced — inference returned no final result")
-        raise RuntimeError("[FISH_SPEECH] No audio produced — inference returned no final result")
+    if not chunks:
+        print(f"[ERROR]   [{_ts()}] [FISH_SPEECH] Inference returned no audio chunks")
+        raise ValueError("[FISH_SPEECH] Inference returned no audio.")
 
-    if audio_array.size == 0:
-        print(f"[ERROR]   [{_ts()}] [FISH_SPEECH] Inference returned an empty audio array")
-        raise RuntimeError("[FISH_SPEECH] Inference returned an empty audio array")
+    audio_array = np.concatenate(chunks, axis=-1) if len(chunks) > 1 else chunks[0]
 
-    # Ensure float32 (Fish Speech may return int16 or other dtypes)
-    if audio_array.dtype != np.float32:
+    # Squeeze (1, N) codec output to (N,) mono before writing
+    if audio_array.ndim == 2 and audio_array.shape[0] == 1:
+        audio_array = audio_array.squeeze(0)
+
+    # Normalise: int16/int32 → float32; float already in [-1,1] passes through
+    if audio_array.dtype in (np.int16, np.int32):
+        audio_array = audio_array.astype(np.float32) / 32768.0
+    else:
         audio_array = audio_array.astype(np.float32)
-    if audio_array.max() > 1.0 or audio_array.min() < -1.0:
-        audio_array = audio_array / 32768.0
 
     print(
         f"[INFO]    [{_ts()}] [FISH_SPEECH] Audio generated: shape={audio_array.shape}, "
-        f"rate={sample_rate}, duration={len(audio_array)/sample_rate:.2f}s"
+        f"rate={sample_rate}, duration={audio_array.shape[-1]/sample_rate:.2f}s"
     )
 
     return audio_array, sample_rate

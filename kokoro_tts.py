@@ -2,18 +2,19 @@
 # ### Initialize Kokoro TTS Pipeline
 
 # %%
+import os
 import torch
 import warnings
 from kokoro import KPipeline
 import soundfile as sf
 from IPython.display import Audio
-import os
 from datetime import datetime
 import numpy as np
 from audio_config import KOKORO_VOICE, KOKORO_LANG_CODE, KOKORO_SPEED
 
-# Check device
-device = "mps" if torch.backends.mps.is_available() else "cpu"
+# Kokoro's vocoder uses aten::angle (complex FFT), unsupported on MPS in PyTorch 2.11+.
+# MPS fallback corrupts the signal. CPU is required for correct audio output.
+device = "cpu"
 
 # %%
 # Lazy-initialised — not loaded at import time so the main Flask process
@@ -43,6 +44,8 @@ def generate_audio(text):
         for i, result in enumerate(generator):
             if len(result) == 3:
                 gs, ps, audio = result
+                if hasattr(audio, 'detach'):
+                    audio = audio.detach().cpu().numpy()
                 audio_segments.append(audio)
             else:
                 print(f"[WARNING] [{datetime.now().strftime('%H:%M:%S')}] [KOKORO_TTS] Unexpected generator output at segment {i}: {result}")
