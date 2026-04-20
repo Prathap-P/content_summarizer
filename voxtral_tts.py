@@ -38,7 +38,7 @@ def _get_model():
     global _model
     if _model is None:
         from mlx_audio.tts.utils import load  # heavy import — inside function body
-        model_id = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-bf16")
+        model_id = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-6bit")
         print(f"[INFO]    [{_ts()}] [VOXTRAL_TTS] Loading model: {model_id}")
         _model = load(model_id)
         print(f"[INFO]    [{_ts()}] [VOXTRAL_TTS] Model loaded")
