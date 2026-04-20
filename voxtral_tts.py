@@ -20,7 +20,6 @@ import numpy as np
 VOICES = ["neutral_male"]
 SAMPLE_RATE = 24000
 MAX_CHUNK_CHARS = 500                            # short chunks prevent autoregressive quality drift
-TARGET_LUFS = -23.0                              # ITU-R BS.1770 integrated loudness target (LUFS)
 INTER_CHUNK_SILENCE_MS = 250                     # silence gap between stitched chunks (ms)
 
 # ---------------------------------------------------------------------------
@@ -39,7 +38,7 @@ def _get_model():
     global _model
     if _model is None:
         from mlx_audio.tts.utils import load  # heavy import — inside function body
-        model_id = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit")
+        model_id = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-bf16")
         print(f"[INFO]    [{_ts()}] [VOXTRAL_TTS] Loading model: {model_id}")
         _model = load(model_id)
         print(f"[INFO]    [{_ts()}] [VOXTRAL_TTS] Model loaded")
@@ -112,36 +111,18 @@ def _crossfade(seg1: np.ndarray, seg2: np.ndarray, overlap_ms: int = 50) -> np.n
     return np.concatenate([seg1[:-overlap], blended, seg2[overlap:]])
 
 
-def _normalize_loudness(audio: np.ndarray) -> np.ndarray:
-    """Normalize audio to TARGET_LUFS using ITU-R BS.1770 integrated loudness.
+def _normalize_peak(audio: np.ndarray, peak: float = 0.9) -> np.ndarray:
+    """Normalize audio to the given peak amplitude."""
+    max_val = float(np.max(np.abs(audio)))
+    if max_val < 1e-8:
+        return audio
+    return (audio / max_val * peak).astype(np.float32)
 
-    Falls back to RMS normalization (-23 dBFS ≈ 0.07 RMS) when the chunk is
-    too short for pyloudnorm's 400ms minimum measurement window.
-    """
-    import pyloudnorm as pyln  # heavy import — inside function body; installed as mlx-audio dep
 
-    _FALLBACK_RMS = 0.07  # ≈ -23 dBFS, matches TARGET_LUFS
-    _MIN_LUFS_SAMPLES = int(0.4 * SAMPLE_RATE)  # pyloudnorm requires at least 400ms
-
-    if len(audio) < _MIN_LUFS_SAMPLES:
-        # Too short for integrated loudness — use RMS fallback
-        rms = float(np.sqrt(np.mean(audio ** 2))) + 1e-8
-        return audio * (_FALLBACK_RMS / rms)
-
-    try:
-        meter = pyln.Meter(SAMPLE_RATE)
-        measured = meter.integrated_loudness(audio.astype(np.float64))
-        if not np.isfinite(measured) or measured < -70.0:
-            # Measurement unreliable (silence or near-silence) — RMS fallback
-            rms = float(np.sqrt(np.mean(audio ** 2))) + 1e-8
-            return audio * (_FALLBACK_RMS / rms)
-        normalized = pyln.normalize.loudness(audio.astype(np.float64), measured, TARGET_LUFS)
-        # Clip to [-1, 1] to prevent downstream clipping in WAV writer
-        return np.clip(normalized, -1.0, 1.0).astype(np.float32)
-    except Exception:
-        # pyloudnorm failed for any reason — safe RMS fallback
-        rms = float(np.sqrt(np.mean(audio ** 2))) + 1e-8
-        return (audio * (_FALLBACK_RMS / rms)).astype(np.float32)
+def _reduce_noise(audio: np.ndarray) -> np.ndarray:
+    """Apply spectral gating noise reduction to the assembled audio."""
+    import noisereduce as nr  # heavy import — inside function body
+    return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, prop_decrease=0.6).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +166,8 @@ def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
 
         chunk_audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
 
-        # Normalize per-chunk loudness to ITU-R BS.1770 target (-23 LUFS)
-        chunk_audio = _normalize_loudness(chunk_audio)
+        # Normalize per-chunk loudness to 0.9 peak
+        chunk_audio = _normalize_peak(chunk_audio)
 
         segments.append(chunk_audio)
 
@@ -204,6 +185,9 @@ def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
     final = segments[0]
     for seg in segments[1:]:
         final = _crossfade(final, seg)
+
+    final = _reduce_noise(final)
+    final = _normalize_peak(final)
 
     print(f"[INFO]    [{_ts()}] [VOXTRAL_TTS] Audio generated: {len(final)} samples, {len(final) / SAMPLE_RATE:.2f}s")
     return final
