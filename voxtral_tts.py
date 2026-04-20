@@ -115,14 +115,17 @@ def _normalize_peak(audio: np.ndarray, peak: float = 0.9) -> np.ndarray:
     """Normalize audio to the given peak amplitude."""
     max_val = float(np.max(np.abs(audio)))
     if max_val < 1e-8:
-        return audio
+        return audio.astype(np.float32)
     return (audio / max_val * peak).astype(np.float32)
 
 
 def _reduce_noise(audio: np.ndarray) -> np.ndarray:
     """Apply spectral gating noise reduction to the assembled audio."""
     import noisereduce as nr  # heavy import — inside function body
-    return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, prop_decrease=0.6).astype(np.float32)
+    try:
+        return nr.reduce_noise(y=audio, sr=SAMPLE_RATE, prop_decrease=0.6).astype(np.float32)
+    except Exception:
+        return audio
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +175,7 @@ def generate_audio(text: str, voice: str | None = None) -> np.ndarray:
         segments.append(chunk_audio)
 
         if i < len(chunks) - 1:
-            segments.append(silence)
+            segments.append(silence.copy())
 
         if (i + 1) % 10 == 0:
             gc.collect()
