@@ -342,7 +342,7 @@ def load_content():
             # Select TTS voice once per video and persist to checkpoint for consistent resume
             tts_voice = checkpoint.get("tts_voice", "") if checkpoint else ""
             if not tts_voice and TTS_BACKEND == "voxtral":
-                tts_voice = random.choice(["neutral_male", "neutral_female"])
+                tts_voice = random.choice(["neutral_male"])
                 if checkpoint:
                     checkpoint["tts_voice"] = tts_voice
                     save_checkpoint(checkpoint_key, checkpoint)
