@@ -631,6 +631,64 @@
             font-style: italic;
         }
 
+        /* ---- Finished Cards ---- */
+        .finished-cards-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 4px;
+        }
+        .finished-card {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #1e2a3a;
+            border: 1px solid #2a3a4a;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+        .finished-card-url {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #8ab4d0;
+            font-family: monospace;
+        }
+        .finished-yt-btn {
+            background: #c00;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .finished-yt-btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .finished-yt-status {
+            font-size: 11px;
+            color: #aaa;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .finished-badge {
+            font-size: 10px;
+            padding: 2px 5px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            font-weight: 600;
+        }
+        .finished-badge-audio { background: #0066aa; color: white; }
+        .finished-badge-transcript { background: #2e7d32; color: white; }
+
         /* ---- Left Column (Library + Queue Panels) ---- */
         .left-column {
             display: flex;
@@ -939,11 +997,16 @@
             
             <div class="queue-section">
                 <div class="label">✅ Finished</div>
+
                 <textarea 
                     id="techFinishedList" 
                     readonly
                     placeholder="Completed URLs"
+                    style="display:none"
                 ></textarea>
+                <div id="techFinishedCards" class="finished-cards-container">
+                    <div class="failed-empty">No completed items</div>
+                </div>
             </div>
         </div>
         
@@ -985,11 +1048,16 @@
             
             <div class="queue-section">
                 <div class="label">✅ Finished</div>
+
                 <textarea 
                     id="socialFinishedList" 
                     readonly
                     placeholder="Completed URLs"
+                    style="display:none"
                 ></textarea>
+                <div id="socialFinishedCards" class="finished-cards-container">
+                    <div class="failed-empty">No completed items</div>
+                </div>
             </div>
         </div>
         
@@ -1031,11 +1099,16 @@
             
             <div class="queue-section">
                 <div class="label">✅ Finished</div>
+
                 <textarea 
                     id="scienceFinishedList" 
                     readonly
                     placeholder="Completed URLs"
+                    style="display:none"
                 ></textarea>
+                <div id="scienceFinishedCards" class="finished-cards-container">
+                    <div class="failed-empty">No completed items</div>
+                </div>
             </div>
         </div>
     </div>
@@ -1226,6 +1299,12 @@
         let autoProcessorEnabled = true;
         let wakeLock = null; // Wake Lock to prevent screen sleep during processing
         const failedData = { tech: [], social: [], science: [] };
+
+        function htmlEscape(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        const finishedData = { tech: [], social: [], science: [] };
         
         // Initialize auto-processor on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -1274,6 +1353,17 @@
                 }
                 renderFailedCards(cat);
                 document.getElementById(`${cat}FinishedList`).value      = localStorage.getItem(`${cat}Finished`)      || '';
+
+                try {
+                    const rawFin = localStorage.getItem(`${cat}FinishedData`) || '[]';
+                    finishedData[cat] = JSON.parse(rawFin);
+                    if (!Array.isArray(finishedData[cat])) finishedData[cat] = [];
+                    // Reset stale uploading state — upload never completes after page reload
+                    finishedData[cat] = finishedData[cat].map(i => i.ytStatus === 'uploading' ? { ...i, ytStatus: 'failed' } : i);
+                } catch (_) {
+                    finishedData[cat] = [];
+                }
+                renderFinishedCards(cat);
             });
         }
         
@@ -1285,6 +1375,8 @@
                 localStorage.setItem(`${cat}Processing`,    document.getElementById(`${cat}ProcessingList`).value);
                 localStorage.setItem(`${cat}Failed`,        JSON.stringify(failedData[cat] || []));
                 localStorage.setItem(`${cat}Finished`,      document.getElementById(`${cat}FinishedList`).value);
+
+                localStorage.setItem(`${cat}FinishedData`, JSON.stringify(finishedData[cat] || []));
             });
         }
         
@@ -1466,7 +1558,10 @@
                     // Success - move to finished list
                     const cacheTag = data.from_cache ? ` [CACHED:${data.video_id || 'hit'}]` : '';
                     console.log(`[AUTO-PROCESSOR] ✅ Success${cacheTag}: ${url}`);
-                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id);
+
+                    window._lastLoadResponse = data;
+                    const itemTitle = data.video_id ? `YouTube: ${data.video_id}` : url;
+                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id, data.audio_file || '', data.content || '', itemTitle);
                 } else {
                     // Failed - move to failed list
                     const errorMsg = data.error || 'Unknown error';
@@ -1492,15 +1587,22 @@
             }
         }
         
+
         // Move URL to finished list
-        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null) {
+        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null, audioFile = '', condensedContent = '', title = '') {
+            // Keep textarea in sync for localStorage backward compat
             const finishedListEl = document.getElementById(`${category}FinishedList`);
             const currentFinished = finishedListEl.value.trim();
             const tag = fetch_mode === 'audio' ? '[A]' : '[T]';
             const cacheTag = fromCache ? ` [CACHED:${videoId || 'hit'}]` : '';
             const entry = `${tag}${cacheTag} ${url}`;
             finishedListEl.value = currentFinished ? `${currentFinished}\n${entry}` : entry;
+
+            // Add to finishedData for card rendering
+            const uid = Math.random().toString(36).slice(2, 9);
+            finishedData[category].push({ uid, url, fetch_mode, fromCache, videoId, ytStatus: null, ytVideoId: null, audioFile, condensedContent, title });
             saveQueuesToStorage();
+            renderFinishedCards(category);
         }
         
         // Move URL to failed list
@@ -1581,7 +1683,7 @@
                         ${titleHtml}
                         <div class="failed-card-header">
                             <span class="failed-badge ${badgeClass}">${badgeText}</span>
-                            <span class="failed-url" title="${url}">${url}</span>
+                            <span class="failed-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
                         </div>
                         <div class="failed-error">${safeError}</div>
                         <div class="failed-card-actions">
@@ -1591,6 +1693,109 @@
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        function renderFinishedCards(category) {
+            const container = document.getElementById(`${category}FinishedCards`);
+            if (!container) return;
+            const items = finishedData[category] || [];
+            if (items.length === 0) {
+                container.innerHTML = '<div class="failed-empty">No completed items</div>';
+                return;
+            }
+            container.innerHTML = items.map(item => {
+                const { uid, url, fetch_mode, ytStatus, ytVideoId } = item;
+                const badgeClass = fetch_mode === 'audio' ? 'finished-badge-audio' : 'finished-badge-transcript';
+                const badgeText = fetch_mode === 'audio' ? '[A]' : '[T]';
+
+                let ytBtnHtml = '';
+                if (!ytStatus) {
+                    ytBtnHtml = `<button class="finished-yt-btn" onclick="uploadToYoutube('${uid}','${category}')">🎬 YouTube</button>`;
+                } else if (ytStatus === 'uploading') {
+                    ytBtnHtml = `<button class="finished-yt-btn" disabled>⬆️ Uploading…</button>`;
+                } else if (ytStatus === 'private') {
+                    ytBtnHtml = `<button class="finished-yt-btn" onclick="publishNow('${ytVideoId}','${uid}','${category}')">🔒 Publish Now</button>`;
+                } else if (ytStatus === 'published') {
+                    ytBtnHtml = `<span class="finished-yt-status">✅ Published</span>`;
+                } else if (ytStatus === 'failed') {
+                    ytBtnHtml = `<button class="finished-yt-btn" onclick="uploadToYoutube('${uid}','${category}')">❌ Retry</button>`;
+                }
+
+                return `
+                <div class="finished-card" id="finished-card-${uid}">
+                    <span class="finished-badge ${badgeClass}">${badgeText}</span>
+                    <span class="finished-card-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
+                    ${ytBtnHtml}
+                </div>`;
+            }).join('');
+        }
+
+        async function uploadToYoutube(uid, category) {
+            const item = (finishedData[category] || []).find(i => i.uid === uid);
+            if (!item) return;
+
+            const audio_file = item.audioFile || '';
+            const content = item.condensedContent || '';
+            const title = item.title || (item.videoId ? `YouTube: ${item.videoId}` : item.url);
+
+            if (!audio_file || !content) {
+                alert('Cannot upload: audio file or content not available. This item may have been processed in a previous session.');
+                return;
+            }
+
+            item.ytStatus = 'uploading';
+            renderFinishedCards(category);
+            saveQueuesToStorage();
+
+            try {
+                const resp = await fetch('/produce_video', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        audio_file,
+                        content,
+                        title,
+                        category,
+                        url: item.url
+                    })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    item.ytStatus = 'private';
+                    item.ytVideoId = data.yt_video_id;
+                } else {
+                    item.ytStatus = 'failed';
+                    console.error('[YT-UPLOAD] Failed:', data.error);
+                }
+            } catch (err) {
+                item.ytStatus = 'failed';
+                console.error('[YT-UPLOAD] Network error:', err);
+            }
+            renderFinishedCards(category);
+            saveQueuesToStorage();
+        }
+
+        async function publishNow(ytVideoId, uid, category) {
+            const item = (finishedData[category] || []).find(i => i.uid === uid);
+            if (!item) return;
+
+            try {
+                const resp = await fetch('/publish_youtube', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ yt_video_id: ytVideoId })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success && data.result.published) {
+                    item.ytStatus = 'published';
+                } else {
+                    console.error('[YT-PUBLISH] Result:', data);
+                }
+            } catch (err) {
+                console.error('[YT-PUBLISH] Network error:', err);
+            }
+            renderFinishedCards(category);
+            saveQueuesToStorage();
         }
 
         function retryOne(uid, category) {
@@ -2428,7 +2633,6 @@
 
 <!--                    const chunk = decoder.decode(value);-->
 <!--                    const lines = chunk.split('\n');-->
-
 
                     streamBuffer += decoder.decode(value, { stream: true });
                     let lines = streamBuffer.split("\n\n");

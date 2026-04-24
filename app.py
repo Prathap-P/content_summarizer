@@ -14,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableWithMessageHistory
 import requests
 import time
+import threading
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -113,11 +114,9 @@ def create_runnable_chain(mode):
         history_messages_key="history"
     )
 
-
 @app.route('/')
 def index():
     return render_template('index.html')
-
 
 @app.route('/load_content', methods=['POST'])
 def load_content():
@@ -479,7 +478,6 @@ def load_content():
         print(f"[ERROR] load_content failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
 
-
 @app.route('/send_email', methods=['POST'])
 def send_email():
     """Send condensed content with audio via email"""
@@ -535,7 +533,6 @@ def send_email():
     except Exception as e:
         print(f"[ERROR] send_email endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
-
 
 @app.route('/send_telegram', methods=['POST'])
 def send_telegram():
@@ -596,7 +593,6 @@ def send_telegram():
     except Exception as e:
         print(f"[ERROR] send_telegram endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
-
 
 @app.route('/retry_failed_telegrams', methods=['POST'])
 def retry_failed_telegrams():
@@ -739,7 +735,6 @@ def retry_failed_telegrams():
         print(f"[ERROR] retry_failed_telegrams endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
 
-
 @app.route('/send_quick_email', methods=['POST'])
 def send_quick_email():
     """Send quick email with custom message and attachments from UI"""
@@ -804,7 +799,6 @@ def send_quick_email():
     except Exception as e:
         print(f"[ERROR] send_quick_email endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
-
 
 @app.route('/send_quick_telegram', methods=['POST'])
 def send_quick_telegram():
@@ -873,7 +867,6 @@ def send_quick_telegram():
     except Exception as e:
         print(f"[ERROR] send_quick_telegram endpoint failed: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
-
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -959,7 +952,6 @@ def chat():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/streamChat', methods=['POST'])
 def stream_chat():
@@ -1081,7 +1073,6 @@ def stream_chat():
                          'Cache-Control': 'no-cache'
                     })
 
-
 @app.route('/audio/<filename>', methods=['GET'])
 def get_audio(filename):
     """Serve a specific audio file"""
@@ -1095,7 +1086,6 @@ def get_audio(filename):
 
     print(f"[ERROR] Audio file not found: {file_path}")
     return jsonify({'error': 'Audio file not found'}), 404
-
 
 @app.route('/clear_conversation', methods=['POST'])
 def clear_conversation():
@@ -1147,6 +1137,88 @@ def text_to_audio():
             'success': False,
             'error': error_msg
         }), 500
+
+def _auto_publish(yt_video_id: str) -> None:
+    """Called by threading.Timer after 1 hour to auto-publish a private video."""
+
+    try:
+        from youtube_uploader import check_and_publish
+        result = check_and_publish(yt_video_id)
+        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Auto-publish result for {yt_video_id}: {result}")
+    except Exception as e:
+        print(f"[ERROR]   Auto-publish failed for {yt_video_id}: {e}")
+
+@app.route('/produce_video', methods=['POST'])
+
+def produce_video_route():
+
+    try:
+        data = request.get_json(force=True) or {}
+        # Enforce basename only — prevents path traversal (e.g. ../../etc/passwd)
+        audio_file = os.path.basename(data.get('audio_file', '').strip())
+        content = data.get('content', '').strip()
+        title = data.get('title', '').strip()
+        category = data.get('category', 'tech')
+        url = data.get('url', '')
+
+        if not audio_file or not content:
+            return jsonify({'success': False, 'error': 'audio_file and content are required'}), 400
+
+        if category not in ('tech', 'social', 'science'):
+            category = 'tech'
+
+        from video_producer import produce_video
+        from youtube_uploader import upload_video
+
+        result = produce_video(audio_file_basename=audio_file, script=content, title=title or 'Untitled')
+
+        description = f"Condensed content from {url or 'unknown source'}\n\nCategory: {category}"
+        yt_video_id = upload_video(
+            mp4_path=result['mp4_path'],
+            title=title or 'Untitled',
+            description=description,
+            thumb_path=result['thumb_path'],
+            srt_path=result['srt_path'],
+            category=category,
+        )
+
+        if not yt_video_id:
+            return jsonify({'success': False, 'error': 'upload_video returned no video ID'}), 500
+
+        t = threading.Timer(3600, _auto_publish, args=[yt_video_id])
+        t.daemon = True
+        t.start()
+
+        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Video produced and uploaded: {yt_video_id}")
+        return jsonify({
+            'success': True,
+            'yt_video_id': yt_video_id,
+            'mp4_path': result['mp4_path'],
+            'duration_seconds': result['duration_seconds'],
+        })
+    except Exception as e:
+        print(f"[ERROR]   /produce_video failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/publish_youtube', methods=['POST'])
+
+def publish_youtube_route():
+
+    try:
+        data = request.get_json(force=True) or {}
+        yt_video_id = data.get('yt_video_id', '').strip()
+
+        if not yt_video_id:
+            return jsonify({'success': False, 'error': 'yt_video_id is required'}), 400
+
+        from youtube_uploader import check_and_publish
+        result = check_and_publish(yt_video_id)
+
+        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Manual publish result for {yt_video_id}: {result}")
+        return jsonify({'success': True, 'result': result})
+    except Exception as e:
+        print(f"[ERROR]   /publish_youtube failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     purge_expired_checkpoints()

@@ -13,6 +13,11 @@ backup_content/
 condensation_cache/
 translation_cache/
 yt_audio/
+youtube_outputs/
+client_secrets.json
+token.json
+youtube_quota.json
 /website_summarizer.egg-info/
 fish-speech-src/
 CHANGELOG.md
+.github/instructions/wmt-copilot.instructions.md
