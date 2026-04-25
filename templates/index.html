@@ -716,6 +716,81 @@
             margin-top: 6px;
         }
 
+        /* ---- Queue Cards ---- */
+        .queue-cards-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 4px 2px;
+            min-height: 48px;
+        }
+
+        .queue-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: #fff;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            transition: box-shadow 0.2s;
+            flex-shrink: 0;
+        }
+
+        .queue-card:hover {
+            box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+        }
+
+        .queue-card-body {
+            padding: 8px 10px;
+        }
+
+        .queue-card-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+
+        .queue-card-url {
+            font-size: 10px;
+            font-family: 'Courier New', monospace;
+            color: #444;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        .queue-card-actions {
+            margin-top: 6px;
+        }
+
+        .queue-remove-btn {
+            width: 100%;
+            padding: 5px 0;
+            font-size: 11px;
+            font-weight: 600;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #f5f5f5;
+            color: #757575;
+            transition: background 0.2s;
+        }
+
+        .queue-remove-btn:hover {
+            background: #ffcdd2;
+            color: #c62828;
+        }
+
+        .queue-empty {
+            font-size: 11px;
+            color: #bbb;
+            text-align: center;
+            padding: 12px 0;
+        }
+
         /* ---- Left Column (Library + Queue Panels) ---- */
         .left-column {
             display: flex;
@@ -995,7 +1070,11 @@
                 <textarea 
                     id="techQueueList" 
                     placeholder="Tech URLs (one per line)"
+                    style="display:none"
                 ></textarea>
+                <div id="techTranscriptQueueCards" class="queue-cards-container">
+                    <div class="queue-empty">Queue is empty</div>
+                </div>
             </div>
 
             <div class="queue-section">
@@ -1003,7 +1082,11 @@
                 <textarea 
                     id="techAudioQueueList" 
                     placeholder="YouTube URLs — forced Whisper (one per line)"
+                    style="display:none"
                 ></textarea>
+                <div id="techAudioQueueCards" class="queue-cards-container">
+                    <div class="queue-empty">Queue is empty</div>
+                </div>
             </div>
             
             <div class="queue-section">
@@ -1046,7 +1129,11 @@
                 <textarea 
                     id="socialQueueList" 
                     placeholder="Social URLs (one per line)"
+                    style="display:none"
                 ></textarea>
+                <div id="socialTranscriptQueueCards" class="queue-cards-container">
+                    <div class="queue-empty">Queue is empty</div>
+                </div>
             </div>
 
             <div class="queue-section">
@@ -1054,7 +1141,11 @@
                 <textarea 
                     id="socialAudioQueueList" 
                     placeholder="YouTube URLs — forced Whisper (one per line)"
+                    style="display:none"
                 ></textarea>
+                <div id="socialAudioQueueCards" class="queue-cards-container">
+                    <div class="queue-empty">Queue is empty</div>
+                </div>
             </div>
             
             <div class="queue-section">
@@ -1097,7 +1188,11 @@
                 <textarea 
                     id="scienceQueueList" 
                     placeholder="Science URLs (one per line)"
+                    style="display:none"
                 ></textarea>
+                <div id="scienceTranscriptQueueCards" class="queue-cards-container">
+                    <div class="queue-empty">Queue is empty</div>
+                </div>
             </div>
 
             <div class="queue-section">
@@ -1105,7 +1200,11 @@
                 <textarea 
                     id="scienceAudioQueueList" 
                     placeholder="YouTube URLs — forced Whisper (one per line)"
+                    style="display:none"
                 ></textarea>
+                <div id="scienceAudioQueueCards" class="queue-cards-container">
+                    <div class="queue-empty">Queue is empty</div>
+                </div>
             </div>
             
             <div class="queue-section">
@@ -1326,6 +1425,7 @@
         let autoProcessorEnabled = true;
         let wakeLock = null; // Wake Lock to prevent screen sleep during processing
         const failedData = { tech: [], social: [], science: [] };
+        let queueTitleCache = {};  // { videoId: title } flat map for queue card titles
 
         function htmlEscape(str) {
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1348,10 +1448,12 @@
                 document.getElementById(`${cat}QueueList`).addEventListener('input', () => {
                     saveQueuesToStorage();
                     syncWakeLock();
+                    renderQueueCards(cat, 'transcript');
                 });
                 document.getElementById(`${cat}AudioQueueList`).addEventListener('input', () => {
                     saveQueuesToStorage();
                     syncWakeLock();
+                    renderQueueCards(cat, 'audio');
                 });
             });
 
@@ -1367,6 +1469,12 @@
         
         // Load queues from localStorage
         function loadQueuesFromStorage() {
+            try {
+                queueTitleCache = JSON.parse(localStorage.getItem('queueTitleCache') || '{}');
+                if (typeof queueTitleCache !== 'object' || Array.isArray(queueTitleCache)) queueTitleCache = {};
+            } catch (_) {
+                queueTitleCache = {};
+            }
             ['tech', 'social', 'science'].forEach(cat => {
                 document.getElementById(`${cat}QueueList`).value         = localStorage.getItem(`${cat}Queue`)         || '';
                 document.getElementById(`${cat}AudioQueueList`).value    = localStorage.getItem(`${cat}AudioQueue`)    || '';
@@ -1392,6 +1500,10 @@
                 }
                 renderFinishedCards(cat);
             });
+            ['tech', 'social', 'science'].forEach(cat => {
+                renderQueueCards(cat, 'transcript');
+                renderQueueCards(cat, 'audio');
+            });
         }
         
         // Save queues to localStorage
@@ -1405,6 +1517,7 @@
 
                 localStorage.setItem(`${cat}FinishedData`, JSON.stringify(finishedData[cat] || []));
             });
+            localStorage.setItem('queueTitleCache', JSON.stringify(queueTitleCache));
         }
         
         // Check if any queue or processing list has active items
@@ -1497,6 +1610,7 @@
                         // Persist removal immediately — a page reload must never
                         // replay a URL that has already been handed off.
                         saveQueuesToStorage();
+                        renderQueueCards(category, fetch_mode === 'audio' ? 'audio' : 'transcript');
                         return { url, category, fetch_mode };
                     }
                 }
@@ -1792,6 +1906,100 @@
             }).join('');
         }
 
+        function renderQueueCards(category, queueType) {
+            const containerId = queueType === 'transcript'
+                ? `${category}TranscriptQueueCards`
+                : `${category}AudioQueueCards`;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            const textareaId = queueType === 'transcript'
+                ? `${category}QueueList`
+                : `${category}AudioQueueList`;
+            const textarea = document.getElementById(textareaId);
+            const urls = textarea ? textarea.value.split('\n').map(u => u.trim()).filter(Boolean) : [];
+
+            if (urls.length === 0) {
+                container.innerHTML = '<div class="queue-empty">Queue is empty</div>';
+                return;
+            }
+
+            const badgeClass = queueType === 'audio' ? 'badge-audio' : 'badge-transcript';
+            const badgeText = queueType === 'audio' ? '[A]' : '[T]';
+
+            container.innerHTML = urls.map((url, index) => {
+                const videoId = extractVideoId(url);
+                const title = videoId ? (queueTitleCache[videoId] || null) : null;
+
+                const mediaHtml = videoId
+                    ? `<img class="failed-thumbnail" src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" alt="thumbnail" onerror="this.style.display='none'">`
+                    : `<div class="failed-thumbnail-placeholder">📰</div>`;
+                const titleHtml = videoId
+                    ? (title
+                        ? `<div class="failed-title" title="${htmlEscape(title)}">${htmlEscape(title)}</div>`
+                        : `<div class="failed-title-loading">Loading title…</div>`)
+                    : '';
+
+                if (videoId && !(videoId in queueTitleCache)) {
+                    fetchAndCacheQueueTitle(videoId);
+                }
+
+                return `
+                <div class="queue-card">
+                    ${mediaHtml}
+                    <div class="queue-card-body">
+                        ${titleHtml}
+                        <div class="queue-card-header">
+                            <span class="failed-badge ${badgeClass}">${badgeText}</span>
+                            <span class="queue-card-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
+                        </div>
+                        <div class="queue-card-actions">
+                            <button class="queue-remove-btn" data-url="${htmlEscape(url)}" data-cat="${category}" data-qtype="${queueType}" onclick="removeFromQueueBtn(this)">✕ Remove</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function fetchAndCacheQueueTitle(videoId) {
+            if (queueTitleCache[videoId] !== undefined) return;
+            queueTitleCache[videoId] = null; // mark as in-progress to prevent duplicate fetches
+            try {
+                const res = await fetch(
+                    `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+                );
+                if (!res.ok) return;
+                const data = await res.json();
+                queueTitleCache[videoId] = data.title || null;
+                saveQueuesToStorage();
+                ['tech', 'social', 'science'].forEach(cat => {
+                    renderQueueCards(cat, 'transcript');
+                    renderQueueCards(cat, 'audio');
+                });
+            } catch (_) {
+                // oEmbed unavailable — cards show without title
+            }
+        }
+
+        function removeFromQueue(url, category, queueType) {
+            const textareaId = queueType === 'transcript'
+                ? `${category}QueueList`
+                : `${category}AudioQueueList`;
+            const textarea = document.getElementById(textareaId);
+            if (!textarea) return;
+            const lines = textarea.value.split('\n').map(u => u.trim()).filter(Boolean);
+            const idx = lines.indexOf(url);
+            if (idx !== -1) lines.splice(idx, 1);
+            textarea.value = lines.join('\n');
+            saveQueuesToStorage();
+            renderQueueCards(category, queueType);
+            syncWakeLock();
+        }
+
+        function removeFromQueueBtn(btn) {
+            removeFromQueue(btn.dataset.url, btn.dataset.cat, btn.dataset.qtype);
+        }
+
         async function uploadToYoutube(uid, category) {
             const item = (finishedData[category] || []).find(i => i.uid === uid);
             if (!item) return;
@@ -1872,6 +2080,7 @@
             queueEl.value = existing ? `${existing}\n${url}` : url;
             saveQueuesToStorage();
             renderFailedCards(category);
+            renderQueueCards(category, fetch_mode === 'audio' ? 'audio' : 'transcript');
             syncWakeLock();
             if (!isProcessing) processNextLink();
         }
@@ -1967,6 +2176,7 @@
             const existing = queueEl.value.trim();
             queueEl.value = existing ? `${existing}\n${url}` : url;
             saveQueuesToStorage();
+            renderQueueCards(targetCategory, fetchMode === 'audio' ? 'audio' : 'transcript');
             syncWakeLock();
             if (!isProcessing) processNextLink();
             const modeLabel = fetchMode === 'audio' ? 'Audio' : 'Transcript';
@@ -2598,6 +2808,10 @@
                 if (reQueued.length > 0) {
                     saveQueuesToStorage();
                     console.log(`[RETRY] ${reQueued.length} URL(s) re-queued and persisted to localStorage`);
+                    ['tech', 'social', 'science'].forEach(cat => {
+                        renderQueueCards(cat, 'transcript');
+                        renderQueueCards(cat, 'audio');
+                    });
                 }
 
                 // --- Step 2: Retry Telegram backup files (existing logic) ---
