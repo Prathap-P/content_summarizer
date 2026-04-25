@@ -689,6 +689,33 @@
         .finished-badge-audio { background: #0066aa; color: white; }
         .finished-badge-transcript { background: #2e7d32; color: white; }
 
+        /* Finished card upgrades */
+        .finished-card {
+            border: 1px solid #2a3a4a;
+            border-radius: 8px;
+            background: #1e2a3a;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+            transition: box-shadow 0.2s;
+            flex-shrink: 0;
+            display: block;
+        }
+        .finished-card:hover {
+            box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+        }
+        .finished-card-body {
+            padding: 8px 10px;
+        }
+        .finished-card-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+        .finished-card-actions {
+            margin-top: 6px;
+        }
+
         /* ---- Left Column (Library + Queue Panels) ---- */
         .left-column {
             display: flex;
@@ -1603,6 +1630,7 @@
             finishedData[category].push({ uid, url, fetch_mode, fromCache, videoId, ytStatus: null, ytVideoId: null, audioFile, condensedContent, title });
             saveQueuesToStorage();
             renderFinishedCards(category);
+            if (videoId) fetchFinishedVideoTitle(uid, category, videoId);
         }
         
         // Move URL to failed list
@@ -1639,6 +1667,23 @@
                 renderFailedCards(category);
             } catch (_) {
                 // oEmbed unavailable — card already shows without title
+            }
+        }
+
+        async function fetchFinishedVideoTitle(uid, category, videoId) {
+            try {
+                const res = await fetch(
+                    `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+                );
+                if (!res.ok) return;
+                const data = await res.json();
+                const item = (finishedData[category] || []).find(i => i.uid === uid);
+                if (!item) return;
+                item.title = data.title || item.title;
+                saveQueuesToStorage();
+                renderFinishedCards(category);
+            } catch (_) {
+                // oEmbed unavailable — card shows without title
             }
         }
 
@@ -1704,7 +1749,7 @@
                 return;
             }
             container.innerHTML = items.map(item => {
-                const { uid, url, fetch_mode, ytStatus, ytVideoId } = item;
+                const { uid, url, fetch_mode, ytStatus, ytVideoId, videoId, title } = item;
                 const badgeClass = fetch_mode === 'audio' ? 'finished-badge-audio' : 'finished-badge-transcript';
                 const badgeText = fetch_mode === 'audio' ? '[A]' : '[T]';
 
@@ -1721,11 +1766,28 @@
                     ytBtnHtml = `<button class="finished-yt-btn" onclick="uploadToYoutube('${uid}','${category}')">❌ Retry</button>`;
                 }
 
+                const mediaHtml = videoId
+                    ? `<img class="failed-thumbnail" src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" alt="thumbnail" onerror="this.style.display='none'">`
+                    : `<div class="failed-thumbnail-placeholder">📰</div>`;
+                const titleHtml = videoId
+                    ? (title
+                        ? `<div class="failed-title" title="${title.replace(/"/g, '&quot;')}">${title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`
+                        : `<div class="failed-title-loading">Loading title…</div>`)
+                    : '';
+
                 return `
                 <div class="finished-card" id="finished-card-${uid}">
-                    <span class="finished-badge ${badgeClass}">${badgeText}</span>
-                    <span class="finished-card-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
-                    ${ytBtnHtml}
+                    ${mediaHtml}
+                    <div class="finished-card-body">
+                        ${titleHtml}
+                        <div class="finished-card-header">
+                            <span class="finished-badge ${badgeClass}">${badgeText}</span>
+                            <span class="finished-card-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
+                        </div>
+                        <div class="finished-card-actions">
+                            ${ytBtnHtml}
+                        </div>
+                    </div>
                 </div>`;
             }).join('');
         }
