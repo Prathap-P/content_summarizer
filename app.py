@@ -14,7 +14,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableWithMessageHistory
 import requests
 import time
-import threading
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -140,6 +139,11 @@ def load_content():
         print(f"[WARNING] Invalid fetch_mode '{fetch_mode}', defaulting to 'transcript'")
         fetch_mode = 'transcript'
 
+    script_style = data.get('script_style', 'summary')
+    if script_style not in ['summary', 'analysis']:
+        print(f"[WARNING] Invalid script_style '{script_style}', defaulting to 'summary'")
+        script_style = 'summary'
+
     # Audio queue only makes sense for YouTube — reject non-YouTube URLs early
     if fetch_mode == 'audio' and mode != 'youtube':
         return jsonify({
@@ -168,10 +172,10 @@ def load_content():
     # Checkpoint setup — compute key before any I/O so every stage can
     # save progress and a retry resumes from where it stopped.
     # ------------------------------------------------------------------
-    checkpoint_key = compute_cache_key(url, mode, current_model_key, fetch_mode)
+    checkpoint_key = compute_cache_key(url, mode, current_model_key, fetch_mode, script_style)
     checkpoint = load_checkpoint(checkpoint_key)
     if checkpoint is None:
-        checkpoint_key, checkpoint = create_checkpoint(url, mode, current_model_key, fetch_mode)
+        checkpoint_key, checkpoint = create_checkpoint(url, mode, current_model_key, fetch_mode, script_style)
     else:
         print(
             f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
@@ -180,8 +184,8 @@ def load_content():
         )
 
     audio_time = None  # declared early so except blocks can reference it
-
     try:
+        tts_input = ''  # declared early; set in both cache-hit and non-cache branches
         # Initialize conversation chain for the selected mode
         conversation_chain = create_runnable_chain(mode)
         current_mode = mode
@@ -199,6 +203,7 @@ def load_content():
             and checkpoint.get("final_output")
         ):
             condensed_content = checkpoint["final_output"]
+            tts_input = checkpoint.get("tts_input") or condensed_content
             audio_file = os.path.basename(cached_audio_path)
             audio_file_path = cached_audio_path
             raw_word_count = len((checkpoint.get("raw_content") or "").split())
@@ -285,7 +290,8 @@ def load_content():
             else:
                 print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensing content...")
                 condensed_content = condense_content(
-                    raw_content, current_model, checkpoint_key, checkpoint
+                    raw_content, current_model, checkpoint_key, checkpoint,
+                    script_style=script_style
                 )
                 print(
                     f"[SUCCESS] Condensed: {len(raw_content)} -> {len(condensed_content)} chars"
@@ -326,6 +332,8 @@ def load_content():
                 intro_text = ""
 
             tts_input = (intro_text + "\n\n" + condensed_content).strip() if intro_text else condensed_content
+            checkpoint["tts_input"] = tts_input
+            save_checkpoint(checkpoint_key, checkpoint)
 
             # -----------------------------------------------------------
             # Step 3: Generate audio (resume if already cached)
@@ -460,6 +468,7 @@ def load_content():
             'audio_time': round(audio_time, 2) if audio_time else None,
             'from_cache': _cache_hit,
             'video_id': _video_id,
+            'tts_script': tts_input,
             'success': True
         })
 
@@ -1138,16 +1147,6 @@ def text_to_audio():
             'error': error_msg
         }), 500
 
-def _auto_publish(yt_video_id: str) -> None:
-    """Called by threading.Timer after 1 hour to auto-publish a private video."""
-
-    try:
-        from youtube_uploader import check_and_publish
-        result = check_and_publish(yt_video_id)
-        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Auto-publish result for {yt_video_id}: {result}")
-    except Exception as e:
-        print(f"[ERROR]   Auto-publish failed for {yt_video_id}: {e}")
-
 @app.route('/produce_video', methods=['POST'])
 
 def produce_video_route():
@@ -1170,7 +1169,9 @@ def produce_video_route():
         from video_producer import produce_video
         from youtube_uploader import upload_video
 
-        result = produce_video(audio_file_basename=audio_file, script=content, title=title or 'Untitled')
+        # Extract YouTube video_id so produce_video can download the original thumbnail
+        video_id = extract_video_id(url) if url else ""
+        result = produce_video(audio_file_basename=audio_file, script=content, title=title or 'Untitled', video_id=video_id or "")
 
         description = f"Condensed content from {url or 'unknown source'}\n\nCategory: {category}"
         yt_video_id = upload_video(
@@ -1184,10 +1185,6 @@ def produce_video_route():
 
         if not yt_video_id:
             return jsonify({'success': False, 'error': 'upload_video returned no video ID'}), 500
-
-        t = threading.Timer(3600, _auto_publish, args=[yt_video_id])
-        t.daemon = True
-        t.start()
 
         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Video produced and uploaded: {yt_video_id}")
         return jsonify({
