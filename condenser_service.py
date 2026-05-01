@@ -16,6 +16,7 @@ def condense_content(
     current_model,
     checkpoint_key: Optional[str] = None,
     checkpoint: Optional[dict] = None,
+    script_style: str = "summary",
 ) -> str:
     """Run map-reduce condensation, resuming from checkpoint if provided.
 
@@ -25,6 +26,7 @@ def condense_content(
         checkpoint_key: Key for atomic checkpoint saves.  None = no persistence.
         checkpoint:     Mutable checkpoint dict; updated in-place and saved after
                         every step so a crash loses at most one step's work.
+        script_style:   'summary' (default) or 'analysis'.
 
     Returns:
         Condensed text string.
@@ -50,9 +52,10 @@ def condense_content(
             _save()
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Content split into {len(chunks)} chunks")
 
-    map_prompt = map_reduce_custom_prompts["map_prompt"]
-    reduce_prompt = map_reduce_custom_prompts["reduce_prompt"]
-    reduce_with_context_prompt = map_reduce_custom_prompts["reduce_with_context_prompt"]
+    _prompts = analysis_map_reduce_prompts if script_style == "analysis" else map_reduce_custom_prompts
+    map_prompt = _prompts["map_prompt"]
+    reduce_prompt = _prompts["reduce_prompt"]
+    reduce_with_context_prompt = _prompts["reduce_with_context_prompt"]
 
     # ------------------------------------------------------------------
     # Stage 2 — MAP phase
@@ -196,7 +199,7 @@ def condense_content(
 
             # TTS polish pass (runs for both fresh and partial-resume paths)
             tts_output = _run_tts_pass(
-                cleaned_reduce, current_model, "0", checkpoint, checkpoint_key
+                cleaned_reduce, current_model, "0", checkpoint, checkpoint_key, _prompts
             )
             if _has_checkpoint:
                 checkpoint.setdefault("tts_results", {})["0"] = tts_output
@@ -317,7 +320,7 @@ def condense_content(
 
             # TTS polish pass — runs for both Case 2 (partial resume) and Case 3 (fresh)
             tts_batch = _run_tts_pass(
-                cleaned_batch, current_model, str_batch, checkpoint, checkpoint_key
+                cleaned_batch, current_model, str_batch, checkpoint, checkpoint_key, _prompts
             )
             if _has_checkpoint:
                 checkpoint.setdefault("tts_results", {})[str_batch] = tts_batch
@@ -411,6 +414,7 @@ def _run_tts_pass(
     retry_key: str,
     checkpoint: Optional[dict],
     checkpoint_key: Optional[str],
+    prompts_dict: Optional[dict] = None,
 ) -> str:
     """Run the TTS speech-polish pass on a single reduce batch result.
 
@@ -433,6 +437,7 @@ def _run_tts_pass(
         ValueError: On model crash or missing <final_script> tags (after persisting retry count).
     """
     _has_checkpoint = checkpoint_key is not None and checkpoint is not None
+    _prompts = prompts_dict if prompts_dict is not None else map_reduce_custom_prompts
 
     def _save() -> None:
         if _has_checkpoint:
@@ -452,7 +457,7 @@ def _run_tts_pass(
         System:
         {yt_transcript_shortener_system_message}
         Input:
-        {map_reduce_custom_prompts["tts_prompt"].replace("{text_to_refine}", text)}
+        {_prompts["tts_prompt"].replace("{text_to_refine}", text)}
     """
 
     print(f"[DEBUG] Running TTS pass for batch {retry_key} ({len(text)} chars)...")
