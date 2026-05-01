@@ -282,3 +282,156 @@ Content summary samples (up to three, in order):
 
 <final_script>"""
 }
+
+analysis_map_reduce_prompts = {
+    "map_prompt": """# TASK: ANALYTICAL EXTRACTION MAPPING
+You are reading a segment of a larger transcript and extracting its analytical substance for a professional narrator delivering a deep-dive commentary piece.
+
+# CORE OBJECTIVE
+Do not merely narrate what happened. Ask and answer what this means, what is notable about it, what tensions or contradictions exist, what the implications are, and what expert perspective illuminates this segment. Go beyond the surface.
+
+# CONSTRAINTS
+1. ANALYTICAL DENSITY: Retain at least 30 percent of the word count. Prioritise key claims, expert reasoning, and stakes over surface description.
+2. TTS FLOW: Use oral transitions such as "What makes this striking is," "The tension here is," "Crucially," "This raises the question of." Maintain natural speech rhythm.
+3. FIDELITY: Never omit technical terms, specific numbers, or proper names. Do not hallucinate. Output only what is grounded in the segment.
+4. NO MARKDOWN: Plain spoken prose only. No bullet points, no headers, no URLs, no special characters.
+
+# TTS PROSODY LAYER (KOKORO-SAFE)
+- Use commas for short natural pauses within sentences.
+- Use ellipses (...) for longer pauses or transitions between analytical points.
+- Use em dashes (—) to set off an important insight or aside.
+- Avoid any XML, SSML, or special tags.
+
+# OUTPUT PROTOCOL (CRITICAL)
+- SINGLE VERSION ONLY
+- NO META-TEXT
+- WRAP OUTPUT inside <final_script> tags
+
+INPUT SEGMENT:
+"{chunk_text}"
+
+ANALYTICAL SCRIPT:
+<final_script>
+(Start directly with the analytical narrative here)""",
+
+    "reduce_prompt": """# ROLE: Lead Analytical Narrator
+# TASK: Synthesize fragmented analytical extractions into a single coherent deep-dive commentary script.
+
+# CORE OBJECTIVES
+1. ARGUMENT STRUCTURE: Organise the material into a clear analytical arc — establish the context, surface the tensions, explore the implications, and land on a meaningful conclusion.
+2. LOCK NARRATIVE ANCHORS: Retain 100% of proper nouns, dates, technical specs, and cited figures.
+3. ANALYTICAL CONTINUITY: Each paragraph should build on the previous one. Use logical bridges such as "This connects to," "The deeper issue is," "What this reveals is."
+4. NO LISTS: All output must be continuous prose. No bullet points, no headers.
+5. NO LOSS: Retain 100% of the analytical content from the fragments.
+
+# TTS PROSODY LAYER (KOKORO-SAFE)
+- Use commas for natural short pauses.
+- Use ellipses (...) for reflective pauses or transitions between major analytical points.
+- Use em dashes (—) to emphasise a key insight.
+- Avoid special markup or tags.
+
+# TTS AND FORMATTING
+- Clean plain text only.
+- Sentence length max 25 words, varied for rhythm.
+- No markdown, no URLs, no symbols.
+
+# OUTPUT PROTOCOL
+- ONLY final script inside <final_script> tags
+- No meta-text
+
+ANALYTICAL FRAGMENTS TO SYNTHESIZE:
+"{combined_map_results}"
+
+<final_script>""",
+
+    "reduce_with_context_prompt": """# ROLE: Lead Analytical Narrator (Context-Aware)
+# TASK: Continue building the analytical deep-dive script, maintaining argument continuity from the previous section.
+
+# PREVIOUS SECTION CONTEXT
+The analysis so far:
+"{previous_context}"
+
+# CORE OBJECTIVES
+1. ARGUMENT CONTINUITY: Begin with a transition that advances the analytical argument, not just the narrative. Use phrases such as "Building on that tension," "This leads to a deeper question," "What follows from this is."
+2. LOCK NARRATIVE ANCHORS: Retain 100% of proper nouns and technical details.
+3. ANALYTICAL DEPTH: Continue to explore implications, stakes, and expert reasoning — not just events.
+4. NO REDUNDANCY: Do not re-state points already made in the previous section.
+5. NO LOSS: Retain 100% of new analytical content.
+
+# TTS PROSODY LAYER (KOKORO-SAFE)
+- Begin with a natural analytical transition phrase.
+- Use commas for short pauses within sentences.
+- Use ellipses (...) for reflective pauses between major analytical points.
+- Use em dashes (—) for emphasis on key insights.
+- Avoid any markup or tags.
+
+# TTS AND FORMATTING
+- Clean plain text only.
+- Sentence length max 25 words, with variation.
+- No markdown, no URLs, no symbols.
+
+# OUTPUT PROTOCOL
+- ONLY continuation inside <final_script> tags
+- No meta-text
+- Start with an analytical transition
+
+CURRENT BATCH TO SYNTHESIZE:
+"{combined_map_results}"
+
+<final_script>""",
+
+    "intro_prompt": """# ROLE: Broadcast Anchor (Intro Writer)
+# TASK: Write exactly 2 to 3 spoken sentences that introduce what the content is about and frame the key analytical question or tension it explores.
+
+# INPUT
+Content analysis samples (up to three, in order):
+{map_samples}
+
+# RULES
+- Plain spoken prose only — no markdown, no bullets, no URLs.
+- Numbers written in words (e.g. "three" not "3").
+- Acronyms expanded on first use.
+- Maximum 25 words per sentence.
+- Do not name yourself or reference the source format.
+- No meta-text before or after the output.
+
+# OUTPUT PROTOCOL
+- Deliver exactly 2 to 3 sentences inside <final_script> tags.
+- Start directly with <final_script>.
+
+<final_script>""",
+
+    "tts_prompt": """# ROLE: Expert Script Doctor & Speech Synthesist
+# TASK: Refine the provided text into a "High-Fidelity Acoustic" script. You must transform formal written prose into natural, human-like speech that is optimized for Text-to-Speech (TTS) engines.
+
+# THE GOLDEN RULES OF AUDIO-FIRST WRITING
+1. **CONTRACTIONS ARE MANDATORY:** Always use "don't," "it's," "we're," "you'll," and "isn't." Formal, uncontracted words are the #1 cause of robotic-sounding TTS.
+2. **THE BREATH TEST:** No sentence should exceed 20 words. If a sentence is long, follow it with a very short "punchy" sentence (3-5 words). This mimics a narrator catching their breath.
+3. **SIGNPOSTING:** Use conversational bridges to help the listener follow the logic. Start sentences with "Now," "So," "But," "Interestingly," or "Actually."
+4. **ACTIVE ENGAGEMENT:** Use active verbs. Instead of "The data was analyzed by the team," use "The team looked at the data."
+
+# THE PROSODY CODE (KOKORO & NEURAL TTS COMPATIBLE)
+- **Commas (,)**: Use these for short, natural pauses within a thought.
+- **Ellipses (...)**: Use these for 1-second transitions between major ideas or for a "reflective" pause.
+- **Em Dashes (—)**: Use these to set off a side-note or an "aside," which forces the TTS to shift its intonation.
+- **Period (.)**: Ensure every sentence ends with a clear stop to allow the pitch to drop naturally.
+
+# PHONETIC CLARITY
+- **Numbers:** Write out complex numbers if they sound better colloquially (e.g., use "twenty-four hundred" instead of "2,400").
+- **Acronyms:** If an acronym should be spelled out, use dashes (e.g., "A-I" instead of "AI"). If it's a word, leave it (e.g., "NASA").
+- **Avoid Tongue Twisters:** If a phrase is hard to say quickly, simplify the word choice.
+
+# CONSTRAINTS & GUARDRAILS
+- **NO SSML/XML:** Do not use <break> or <speak> tags. Use only the punctuation markers above.
+- **NO LISTS:** Convert all bullet points into flowing narrative sentences.
+- **NO META-TEXT:** Do not provide introductions like "Here is your script." Output ONLY the narrative.
+- **PLAIN TEXT ONLY:** All output must be clean plain text. No markdown, no bullet symbols, no headers.
+
+# OUTPUT PROTOCOL
+- Wrap the final speech-optimized text inside <final_script> tags.
+
+# INPUT TEXT TO REFINE
+"{text_to_refine}"
+
+<final_script>"""
+}
