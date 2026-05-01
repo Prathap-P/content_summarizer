@@ -89,16 +89,19 @@ def compute_cache_key(
     mode: str,
     model_key: str,
     fetch_mode: str = "transcript",
+    script_style: str = "summary",
 ) -> str:
-    """Derive a stable 16-char hex key from (canonical_url, model_key, fetch_mode).
+    """Derive a stable 16-char hex key from (canonical_url, model_key, fetch_mode, script_style).
 
     Identical video URLs in all variants map to the same key.
     Different models never share a key.
     fetch_mode ('transcript' | 'audio') is included so a Whisper-forced audio run
     never reuses a cached transcript-API run for the same video.
+    script_style ('summary' | 'analysis') is included so analysis runs never
+    reuse a cached summary run for the same content.
     """
     canonical_id = _canonicalize_url(url, mode)
-    raw = f"{canonical_id}|{model_key}|{fetch_mode}"
+    raw = f"{canonical_id}|{model_key}|{fetch_mode}|{script_style}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -214,6 +217,7 @@ def create_checkpoint(
     mode: str,
     model_key: str,
     fetch_mode: str = "transcript",
+    script_style: str = "summary",
 ) -> tuple[str, dict]:
     """Create a fresh in-memory checkpoint; does NOT write to disk.
 
@@ -221,14 +225,15 @@ def create_checkpoint(
     empty files for aborted runs.
 
     Args:
-        fetch_mode: ``'transcript'`` or ``'audio'``.  Must match the value
-                    used when the cache key was computed so resume works
-                    correctly across retries.
+        fetch_mode:   ``'transcript'`` or ``'audio'``.  Must match the value
+                      used when the cache key was computed so resume works
+                      correctly across retries.
+        script_style: ``'summary'`` or ``'analysis'``.
 
     Returns:
         (key, data)
     """
-    key = compute_cache_key(url, mode, model_key, fetch_mode)
+    key = compute_cache_key(url, mode, model_key, fetch_mode, script_style)
     data = _fresh_checkpoint(url, mode, model_key, fetch_mode)
     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] New checkpoint created: key={key}")
     return key, data
