@@ -173,41 +173,42 @@ def check_and_publish(yt_video_id: str) -> dict:
 
     Returns a dict with keys: status, published (bool), and optionally error.
     """
+
     try:
+        from googleapiclient.errors import HttpError
+
         service = _get_youtube_service()
-        list_response = service.videos().list(
-            part="status,processingDetails", id=yt_video_id
-        ).execute()
+        list_response = service.videos().list(part="status", id=yt_video_id).execute()
+        _consume_quota(1)  # videos.list costs 1 unit
 
         items = list_response.get("items", [])
         if not items:
             return {"status": "not_found", "published": False}
 
         item = items[0]
-        processing = item.get("processingDetails", {})
-        processing_status = processing.get("processingStatus", "")
+        if item.get("status", {}).get("privacyStatus") == "public":
+            return {"status": "published", "published": True}
 
-        if processing_status == "terminated":
-            print(f"[WARNING] Video {yt_video_id} processing terminated (YouTube failed to process it).")
-            return {"status": "failed", "published": False}
-
-        if processing_status != "succeeded":
+        try:
+            service.videos().update(
+                part="status",
+                body={"id": yt_video_id, "status": {"privacyStatus": "public"}},
+            ).execute()
+            _consume_quota(50)  # videos.update costs 50 units
             print(
                 f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] "
-                f"Video {yt_video_id} still processing: {processing_status}"
+                f"Video {yt_video_id} published successfully."
             )
-            return {"status": "processing", "published": False}
-
-        update_body = {
-            "id": yt_video_id,
-            "status": {"privacyStatus": "public"},
-        }
-        service.videos().update(part="status", body=update_body).execute()
-        print(
-            f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] "
-            f"Video {yt_video_id} published successfully."
-        )
-        return {"status": "published", "published": True}
+            return {"status": "published", "published": True}
+        except HttpError as e:
+            try:
+                body = json.loads(e.content.decode("utf-8"))
+                reasons = {err.get("reason", "") for err in body.get("error", {}).get("errors", [])}
+            except Exception:
+                reasons = set()
+            if reasons & {"processingFailure", "videoNotProcessed", "uploadStillInProgress"}:
+                return {"status": "processing", "published": False}
+            raise
 
     except Exception as e:
         print(f"[ERROR]   check_and_publish failed for {yt_video_id}: {e}")
