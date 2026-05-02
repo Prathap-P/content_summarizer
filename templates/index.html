@@ -679,6 +679,8 @@
             white-space: nowrap;
             flex-shrink: 0;
         }
+
+        .finished-yt-error { font-size: 12px; color: #e57373; margin-top: 4px; }
         .finished-badge {
             font-size: 10px;
             padding: 2px 5px;
@@ -1064,6 +1066,13 @@
         <!-- Tech Queue Panel -->
         <div class="queue-panel">
             <h3>🔧 Tech</h3>
+            <div class="queue-section" style="margin-bottom:6px">
+                <label for="techScriptStyle" style="font-size:0.8em;color:#aaa;">Script style:</label>
+                <select id="techScriptStyle" style="font-size:0.8em;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:2px 6px;">
+                    <option value="summary" selected>Summary</option>
+                    <option value="analysis">Analysis</option>
+                </select>
+            </div>
             
             <div class="queue-section">
                 <div class="label">📋 Transcript Queue</div>
@@ -1123,6 +1132,13 @@
         <!-- Social Queue Panel -->
         <div class="queue-panel">
             <h3>👥 Social</h3>
+            <div class="queue-section" style="margin-bottom:6px">
+                <label for="socialScriptStyle" style="font-size:0.8em;color:#aaa;">Script style:</label>
+                <select id="socialScriptStyle" style="font-size:0.8em;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:2px 6px;">
+                    <option value="summary" selected>Summary</option>
+                    <option value="analysis">Analysis</option>
+                </select>
+            </div>
             
             <div class="queue-section">
                 <div class="label">📋 Transcript Queue</div>
@@ -1182,6 +1198,13 @@
         <!-- Science Queue Panel -->
         <div class="queue-panel">
             <h3>🔬 Science</h3>
+            <div class="queue-section" style="margin-bottom:6px">
+                <label for="scienceScriptStyle" style="font-size:0.8em;color:#aaa;">Script style:</label>
+                <select id="scienceScriptStyle" style="font-size:0.8em;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:2px 6px;">
+                    <option value="summary" selected>Summary</option>
+                    <option value="analysis">Analysis</option>
+                </select>
+            </div>
             
             <div class="queue-section">
                 <div class="label">📋 Transcript Queue</div>
@@ -1508,6 +1531,7 @@
         
         // Save queues to localStorage
         function saveQueuesToStorage() {
+            try {
             ['tech', 'social', 'science'].forEach(cat => {
                 localStorage.setItem(`${cat}Queue`,         document.getElementById(`${cat}QueueList`).value);
                 localStorage.setItem(`${cat}AudioQueue`,    document.getElementById(`${cat}AudioQueueList`).value);
@@ -1518,6 +1542,9 @@
                 localStorage.setItem(`${cat}FinishedData`, JSON.stringify(finishedData[cat] || []));
             });
             localStorage.setItem('queueTitleCache', JSON.stringify(queueTitleCache));
+            } catch (e) {
+                console.error('[STORAGE] Failed to save queue state (QuotaExceededError?):', e);
+            }
         }
         
         // Check if any queue or processing list has active items
@@ -1688,6 +1715,7 @@
                         url, 
                         mode, 
                         fetch_mode,
+                        script_style: document.getElementById(category + 'ScriptStyle')?.value || 'summary',
                         auto_send_telegram: true,
                         category: category 
                     })
@@ -1702,7 +1730,8 @@
 
                     window._lastLoadResponse = data;
                     const itemTitle = data.video_id ? `YouTube: ${data.video_id}` : url;
-                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id, data.audio_file || '', data.content || '', itemTitle);
+
+                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id, data.audio_file || '', data.tts_script || data.content || '', itemTitle);
                 } else {
                     // Failed - move to failed list
                     const errorMsg = data.error || 'Unknown error';
@@ -1730,7 +1759,8 @@
         
 
         // Move URL to finished list
-        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null, audioFile = '', condensedContent = '', title = '') {
+
+        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null, audioFile = '', ttsScript = '', title = '') {
             // Keep textarea in sync for localStorage backward compat
             const finishedListEl = document.getElementById(`${category}FinishedList`);
             const currentFinished = finishedListEl.value.trim();
@@ -1741,7 +1771,7 @@
 
             // Add to finishedData for card rendering
             const uid = Math.random().toString(36).slice(2, 9);
-            finishedData[category].push({ uid, url, fetch_mode, fromCache, videoId, ytStatus: null, ytVideoId: null, audioFile, condensedContent, title });
+            finishedData[category].push({ uid, url, fetch_mode, fromCache, videoId, ytStatus: null, ytVideoId: null, audioFile, ttsScript, title });
             saveQueuesToStorage();
             renderFinishedCards(category);
             if (videoId) fetchFinishedVideoTitle(uid, category, videoId);
@@ -1868,17 +1898,22 @@
                 const badgeText = fetch_mode === 'audio' ? '[A]' : '[T]';
 
                 let ytBtnHtml = '';
-                if (!ytStatus) {
+                if (!item.audioFile) {
+                    ytBtnHtml = `<span class="finished-yt-status" style="color:#888">No audio</span>`;
+                } else if (!ytStatus) {
                     ytBtnHtml = `<button class="finished-yt-btn" onclick="uploadToYoutube('${uid}','${category}')">🎬 YouTube</button>`;
                 } else if (ytStatus === 'uploading') {
                     ytBtnHtml = `<button class="finished-yt-btn" disabled>⬆️ Uploading…</button>`;
                 } else if (ytStatus === 'private') {
                     ytBtnHtml = `<button class="finished-yt-btn" onclick="publishNow('${ytVideoId}','${uid}','${category}')">🔒 Publish Now</button>`;
+                } else if (ytStatus === 'publishing') {
+                    ytBtnHtml = `<button class="finished-yt-btn" disabled>⏳ Publishing…</button>`;
                 } else if (ytStatus === 'published') {
                     ytBtnHtml = `<span class="finished-yt-status">✅ Published</span>`;
                 } else if (ytStatus === 'failed') {
                     ytBtnHtml = `<button class="finished-yt-btn" onclick="uploadToYoutube('${uid}','${category}')">❌ Retry</button>`;
                 }
+                const ytErrorHtml = item.ytError ? `<div class="finished-yt-error">${htmlEscape(item.ytError)}</div>` : '';
 
                 const mediaHtml = videoId
                     ? `<img class="failed-thumbnail" src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" alt="thumbnail" onerror="this.style.display='none'">`
@@ -1900,6 +1935,7 @@
                         </div>
                         <div class="finished-card-actions">
                             ${ytBtnHtml}
+                            ${ytErrorHtml}
                         </div>
                     </div>
                 </div>`;
@@ -2005,7 +2041,8 @@
             if (!item) return;
 
             const audio_file = item.audioFile || '';
-            const content = item.condensedContent || '';
+
+            const content = item.ttsScript || '';
             const title = item.title || (item.videoId ? `YouTube: ${item.videoId}` : item.url);
 
             if (!audio_file || !content) {
@@ -2014,6 +2051,7 @@
             }
 
             item.ytStatus = 'uploading';
+            item.ytError = null;
             renderFinishedCards(category);
             saveQueuesToStorage();
 
@@ -2049,6 +2087,10 @@
             const item = (finishedData[category] || []).find(i => i.uid === uid);
             if (!item) return;
 
+            item.ytError = null;
+            item.ytStatus = 'publishing';
+            renderFinishedCards(category);
+
             try {
                 const resp = await fetch('/publish_youtube', {
                     method: 'POST',
@@ -2056,12 +2098,20 @@
                     body: JSON.stringify({ yt_video_id: ytVideoId })
                 });
                 const data = await resp.json();
+
                 if (resp.ok && data.success && data.result.published) {
                     item.ytStatus = 'published';
+                } else if (resp.ok && data.success && data.result.status === 'processing') {
+                    item.ytStatus = 'private';
+                    item.ytError = 'Still processing — try again in a minute';
                 } else {
+                    item.ytStatus = 'private';
+                    item.ytError = data.error || 'Publish failed';
                     console.error('[YT-PUBLISH] Result:', data);
                 }
             } catch (err) {
+                item.ytStatus = 'private';
+                item.ytError = 'Network error — try again';
                 console.error('[YT-PUBLISH] Network error:', err);
             }
             renderFinishedCards(category);
@@ -2587,7 +2637,8 @@
                     },
                     body: JSON.stringify({ 
                         url,
-                        mode: currentMode
+                        mode: currentMode,
+                        script_style: 'summary'
                     })
                 });
                 
