@@ -62,6 +62,40 @@ def get_audio_duration(wav_path: Path) -> float:
         print(f"[WARNING] Could not read WAV duration for {wav_path}: {exc}")
         return 0.0
 
+def _download_youtube_thumbnail(video_id: str, output_path: Path) -> bool:
+    """Download the original YouTube video thumbnail.
+
+    Tries maxresdefault (1280×720) first, falls back to hqdefault (480×360).
+    YouTube returns a small grey placeholder for maxresdefault when it doesn't
+    exist — detected by file size < 5 KB and retried with hqdefault.
+
+    Returns True if a thumbnail was saved to *output_path*, False otherwise.
+    """
+    import ssl
+    import urllib.request
+    # Use a permissive SSL context — img.youtube.com certificate chain may not
+    # be in the system trust store on some macOS Python installs.
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    for quality in ("maxresdefault", "hqdefault", "sddefault"):
+        thumb_url = f"https://img.youtube.com/vi/{video_id}/{quality}.jpg"
+        try:
+            with urllib.request.urlopen(thumb_url, context=ctx) as resp:
+                data = resp.read()
+            if len(data) > 5000:  # real thumb always >5 KB
+                output_path.write_bytes(data)
+                print(
+                    f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] "
+                    f"YouTube thumbnail downloaded ({quality}) → {output_path.name}"
+                )
+                return True
+            # placeholder grey image — try next quality
+        except Exception as exc:
+            print(f"[WARNING] YouTube thumbnail download failed ({quality}): {exc}")
+    return False
+
+
 def generate_srt(script: str, duration_seconds: float, output_path: Path) -> Path:
     """Generate an SRT subtitle file from *script*.
 
@@ -101,15 +135,16 @@ def generate_srt(script: str, duration_seconds: float, output_path: Path) -> Pat
     if not blocks:
         blocks = [script.strip()]
 
-    total_chars = sum(len(b) for b in blocks)
+    word_counts = [len(b.split()) for b in blocks]
+    total_words = sum(word_counts)
 
     # --- build SRT entries ---
     srt_lines: list[str] = []
-    elapsed_chars = 0
+    elapsed_words = 0
     for idx, block in enumerate(blocks, start=1):
-        start_time = (elapsed_chars / total_chars) * duration_seconds if total_chars else 0.0
-        elapsed_chars += len(block)
-        end_time = (elapsed_chars / total_chars) * duration_seconds if total_chars else duration_seconds
+        start_time = (elapsed_words / total_words) * duration_seconds if total_words else (idx - 1) / len(blocks) * duration_seconds
+        elapsed_words += word_counts[idx - 1]
+        end_time = (elapsed_words / total_words) * duration_seconds if total_words else idx / len(blocks) * duration_seconds
 
         srt_lines.append(str(idx))
         srt_lines.append(f"{_fmt_timestamp(start_time)} --> {_fmt_timestamp(end_time)}")
@@ -120,75 +155,61 @@ def generate_srt(script: str, duration_seconds: float, output_path: Path) -> Pat
     return output_path
 
 def generate_thumbnail(title: str, output_path: Path) -> Path:
-    """Generate a 1280×720 JPEG thumbnail with gradient background and title.
+    """Generate a 1280×720 JPEG thumbnail using Pillow.
 
-    Tries the ``gradients`` lavfi source first; falls back to a solid dark
-    colour if that filter is unavailable on the installed FFmpeg build.
-
-    Single quotes in *title* are escaped for FFmpeg's filter parser; newlines
-    inserted by word-wrapping are converted to the literal ``\\n`` sequence
-    that FFmpeg drawtext understands.
-
-    Parameters
-    ----------
-    title:
-        Human-readable title to render on the thumbnail.
-    output_path:
-        Destination path (must carry ``.jpg`` extension).
-
-    Returns
-    -------
-    Path
-        *output_path* after writing.
+    Dark gradient background with centred white title text. No FFmpeg
+    dependency — works regardless of which filters the installed FFmpeg
+    was compiled with.
     """
-    font_path = "/System/Library/Fonts/Helvetica.ttc"
-    if not Path(font_path).exists():
-        font_path = "Arial"
+    from PIL import Image, ImageDraw, ImageFont
 
-    # Wrap to ~30 chars per line then escape for FFmpeg drawtext:
-    #   - Replace actual newlines with the literal \n FFmpeg drawtext expects
-    #   - Escape single quotes with \' for FFmpeg's filter parser (NOT shell-style)
+    W, H = 1280, 720
+
+    # --- background: vertical dark-blue gradient ---
+    img = Image.new("RGB", (W, H))
+    top_colour = (13, 27, 42)     # #0d1b2a
+    bot_colour = (27, 42, 74)     # #1b2a4a
+    draw = ImageDraw.Draw(img)
+    for y in range(H):
+        t = y / H
+        r = int(top_colour[0] + t * (bot_colour[0] - top_colour[0]))
+        g = int(top_colour[1] + t * (bot_colour[1] - top_colour[1]))
+        b = int(top_colour[2] + t * (bot_colour[2] - top_colour[2]))
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+    # --- font: try system Helvetica, fall back to default ---
+    font_candidates = [
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.load_default()
+    for fp in font_candidates:
+        if Path(fp).exists():
+            try:
+                font = ImageFont.truetype(fp, size=52)
+                break
+            except Exception:
+                continue
+
+    # --- wrap and centre text ---
     wrapped = _wrap_text(title, max_chars=30)
-    escaped = (
-        wrapped
-        .replace("'", "\\'")     # FFmpeg filter parser quote escape
-        .replace("\n", "\\n")    # Python newline → literal \n for drawtext
-    )
+    lines = wrapped.split("\n")
 
-    drawtext_vf = (
-        f"drawtext=fontfile='{font_path}'"
-        f":text='{escaped}'"
-        f":fontcolor=white"
-        f":fontsize=52"
-        f":shadowx=2:shadowy=2"
-        f":x=(W-text_w)/2:y=(H-text_h)/2"
-    )
+    line_height = 60
+    total_text_h = len(lines) * line_height
+    y_start = (H - total_text_h) // 2
 
-    def _run(use_gradient: bool) -> tuple[bool, str]:
-        bg = (
-            "gradients=size=1280x720:c0=#0d1b2a:c1=#1b2a4a:duration=1"
-            if use_gradient
-            else "color=c=#0d1b2a:size=1280x720:duration=1"
-        )
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", bg,
-            "-vf", drawtext_vf,
-            "-vframes", "1",
-            "-q:v", "2",
-            str(output_path),
-        ]
-        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return r.returncode == 0, r.stderr
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = (W - text_w) // 2
+        y = y_start + i * line_height
+        # shadow
+        draw.text((x + 2, y + 2), line, font=font, fill=(0, 0, 0))
+        draw.text((x, y), line, font=font, fill=(255, 255, 255))
 
-    ok, _ = _run(True)
-    if not ok:
-        print("[WARNING] gradients filter unavailable — falling back to solid dark background")
-        ok, stderr = _run(False)
-        if not ok:
-            raise RuntimeError(f"FFmpeg thumbnail generation failed:\n{stderr[-500:]}")
-
+    img.save(str(output_path), "JPEG", quality=90)
     return output_path
 
 def assemble_video(
@@ -230,44 +251,63 @@ def assemble_video(
     RuntimeError
         If FFmpeg exits with a non-zero code.
     """
-    # SRT path: forward slashes, single-quotes escaped for FFmpeg filter parser
-    srt_str = str(srt_path).replace("\\", "/").replace("'", "\\'")
 
-    # NOTE: showwaves requires an audio stream — use [1:a] not [0:v].
-    # Subtitles filter is chained inside filter_complex to avoid the
-    # FFmpeg error: "simple and complex filtergraphs cannot be used together".
-    filter_complex = (
-        f"[1:a]showwaves=s=1920x300:mode=line:colors=0x4fc3f7[waves];"
-        f"[0:v][waves]overlay=0:780[vcomp];"
-        f"[vcomp]subtitles='{srt_str}':force_style='FontSize=24,PrimaryColour=&H00FFFFFF&'[vout]"
+    # Escape characters special in FFmpeg's filter_complex option parser.
+    # Do NOT wrap the path in single quotes — FFmpeg treats 'value' as a quoted
+    # block that consumes colons, merging force_style into the filename and
+    # leaving [vout] dangling (exit 234 / "Invalid argument").
+    srt_str = (
+        str(srt_path)
+        .replace("\\", "\\\\")   # must be first; covers Windows paths
+        .replace("'",  "\\'")
+        .replace(":",  "\\:")
+        .replace("[",  "\\[")
+        .replace("]",  "\\]")
+        .replace(";",  "\\;")
     )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"color=c=#0d1b2a:size=1920x1080:rate=30:duration={duration_seconds}",
-        "-i", str(wav_path),
-        "-filter_complex", filter_complex,
-        "-map", "[vout]",
-        "-map", "1:a",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-pix_fmt", "yuv420p",
-        "-shortest",
-        str(output_path),
-    ]
+    fc_with_subs = (
+        f"[1:a]showwaves=s=1920x300:mode=line:colors=0x4fc3f7[waves];"
+        f"[0:v][waves]overlay=0:780[vcomp];"
+        f"[vcomp]subtitles={srt_str}:force_style=FontSize=24[vout]"
+    )
+    fc_without_subs = (
+        f"[1:a]showwaves=s=1920x300:mode=line:colors=0x4fc3f7[waves];"
+        f"[0:v][waves]overlay=0:780[vout]"
+    )
+
+    def _build_cmd(filter_complex_str: str) -> list:
+        return [
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", f"color=c=#0d1b2a:size=1920x1080:rate=30:duration={duration_seconds}",
+            "-i", str(wav_path),
+            "-filter_complex", filter_complex_str,
+            "-map", "[vout]",
+            "-map", "1:a",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-pix_fmt", "yuv420p",
+            "-shortest",
+            str(output_path),
+        ]
 
     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Running FFmpeg assembly ({duration_seconds:.1f}s)…")
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = subprocess.run(_build_cmd(fc_with_subs), capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        print(f"[ERROR]   FFmpeg assembly failed (exit {result.returncode})")
-        raise RuntimeError(result.stderr[-500:])
+        # Fall back to no-subtitles for any failure — subtitles filter requires
+        # libass which may not be compiled into the local FFmpeg build.
+        print(f"[WARNING] Subtitles filter failed (exit {result.returncode}) — retrying without subtitles")
+        result = subprocess.run(_build_cmd(fc_without_subs), capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            print(f"[ERROR]   FFmpeg assembly failed (exit {result.returncode})")
+            raise RuntimeError(result.stderr[-500:])
     return output_path
 
-def produce_video(audio_file_basename: str, script: str, title: str) -> dict:
+def produce_video(audio_file_basename: str, script: str, title: str, video_id: str = "") -> dict:
     """Orchestrate the full local video production pipeline.
 
     Parameters
@@ -279,6 +319,9 @@ def produce_video(audio_file_basename: str, script: str, title: str) -> dict:
         The condensed spoken-word script used when generating the audio.
     title:
         Human-readable title for the thumbnail.
+    video_id:
+        YouTube video ID used to download the original thumbnail.
+        If empty, thumbnail step is skipped.
 
     Returns
     -------
@@ -286,14 +329,18 @@ def produce_video(audio_file_basename: str, script: str, title: str) -> dict:
         ``{"mp4_path": str, "srt_path": str, "thumb_path": str,
            "duration_seconds": float}``
     """
-    os.makedirs("youtube_outputs", exist_ok=True)
 
-    wav_path = Path("kokoro_outputs") / audio_file_basename
+    os.makedirs(Path(__file__).parent / "youtube_outputs", exist_ok=True)
+
+    wav_path = Path(__file__).parent / "kokoro_outputs" / audio_file_basename
     stem = Path(audio_file_basename).stem
 
-    srt_path = Path("youtube_outputs") / f"{stem}.srt"
-    thumb_path = Path("youtube_outputs") / f"{stem}_thumb.jpg"
-    mp4_path = Path("youtube_outputs") / f"{stem}.mp4"
+    if not wav_path.exists():
+        raise RuntimeError(f"Audio file not found: {wav_path}")
+
+    srt_path = Path(__file__).parent / "youtube_outputs" / f"{stem}.srt"
+    thumb_path = Path(__file__).parent / "youtube_outputs" / f"{stem}_thumb.jpg"
+    mp4_path = Path(__file__).parent / "youtube_outputs" / f"{stem}.mp4"
 
     # Step 1: audio duration
     t0 = datetime.now()
@@ -308,11 +355,19 @@ def produce_video(audio_file_basename: str, script: str, title: str) -> dict:
     elapsed = (datetime.now() - t1).total_seconds()
     print(f"[INFO]    [{t1.strftime('%H:%M:%S')}] SRT generated → {srt_path} ({elapsed:.2f}s)")
 
-    # Step 3: thumbnail
+    # Step 3: thumbnail — use original YouTube thumbnail when video_id is available.
+    # Custom thumbnail generation (generate_thumbnail) is disabled for now;
+    # re-enable it below once the design is finalized.
     t2 = datetime.now()
-    generate_thumbnail(title, thumb_path)
+    if video_id:
+        ok = _download_youtube_thumbnail(video_id, thumb_path)
+        if not ok:
+            print(f"[WARNING] Could not download YouTube thumbnail — video will upload without thumbnail")
+    else:
+        # generate_thumbnail(title, thumb_path)  # TODO: re-enable custom thumbnail
+        print(f"[INFO]    [{t2.strftime('%H:%M:%S')}] No video_id provided — skipping thumbnail")
     elapsed = (datetime.now() - t2).total_seconds()
-    print(f"[INFO]    [{t2.strftime('%H:%M:%S')}] Thumbnail generated → {thumb_path} ({elapsed:.2f}s)")
+    print(f"[INFO]    [{t2.strftime('%H:%M:%S')}] Thumbnail step done ({elapsed:.2f}s)")
 
     # Step 4: video assembly
     t3 = datetime.now()
