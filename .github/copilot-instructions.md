@@ -19,13 +19,19 @@ audio_config.py                # ASR/TTS backend selection via env vars
 process_runner.py              # run_in_subprocess() — spawn-isolated model runner, Semaphore(1)
 model_worker.py                # asr_worker, tts_worker, translate_worker — picklable top-level fns
 kokoro_tts.py                  # generate_audio(), create_audio_file() — Kokoro backend (lazy-loaded)
+voxtral_tts.py                 # Voxtral TTS backend (mlx-audio, Apple Silicon)
+fish_speech_tts.py             # Fish Speech 1.5 TTS backend (supports reference audio)
 qwen_omni_backend.py           # generate_audio_qwen(), get_transcript_via_qwen() — Qwen2.5-Omni backend
 email_sender.py                # send_email_with_audio/attachments
 telegram_sender.py             # send_telegram_with_audio/attachments
+video_producer.py              # Local video production: SRT, thumbnail (Pillow), MP4 (FFmpeg)
+youtube_uploader.py            # YouTube Data API v3 upload, quota tracking, publish
+youtube_auth.py                # One-time OAuth2 setup for YouTube API
 templates/index.html           # Single-page frontend with Transcript + Audio queues
 backup_content/                # Files saved when delivery fails
 condensation_cache/            # Pipeline checkpoint JSON files (gitignored)
 kokoro_outputs/                # Generated .wav files
+youtube_outputs/               # Assembled MP4s, SRT files, thumbnails (gitignored)
 yt_audio/                      # Audio downloaded by yt-dlp for Whisper transcription (gitignored)
 ```
 
@@ -50,7 +56,7 @@ The ASR and TTS backends are configurable via environment variables — no code 
 | Variable | Default | Options |
 |---|---|---|
 | `ASR_BACKEND` | `qwen_omni` | `qwen_omni`, `whisper` |
-| `TTS_BACKEND` | `qwen_omni` | `qwen_omni`, `kokoro` |
+| `TTS_BACKEND` | `qwen_omni` | `qwen_omni`, `kokoro`, `voxtral`, `fish_speech` |
 | `QWEN_OMNI_MODEL_ID` | `Qwen/Qwen2.5-Omni-3B` | Any HF model ID |
 | `QWEN_OMNI_SPEAKER` | `Chelsie` | `Chelsie` (female), `Ethan` (male) |
 
@@ -201,7 +207,7 @@ Use structured `[LEVEL]` prefixes consistently. Do not use the `logging` module.
 | `TELEGRAM_CHAT_ID_SOCIAL` | Social discussion group ID |
 | `TELEGRAM_CHAT_ID_SCIENCE` | Science discussion group ID |
 | `ASR_BACKEND` | `qwen_omni` (default) or `whisper` |
-| `TTS_BACKEND` | `qwen_omni` (default) or `kokoro` |
+| `TTS_BACKEND` | `qwen_omni` (default) or `kokoro`, `voxtral`, `fish_speech` |
 | `QWEN_OMNI_MODEL_ID` | HuggingFace model ID (default: `Qwen/Qwen2.5-Omni-3B`) |
 | `QWEN_OMNI_SPEAKER` | TTS voice: `Chelsie` (default, female) or `Ethan` (male) |
 | `DEFAULT_MODEL_KEY` | Startup LLM key from `models_collection` (default: `mlx_community_qwen_stream_local_llm`) |
@@ -219,6 +225,13 @@ Use structured `[LEVEL]` prefixes consistently. Do not use the `logging` module.
 | `KOKORO_VOICE` | Kokoro TTS voice name (default: `af_sarah`) |
 | `KOKORO_SPEED` | Kokoro TTS speed multiplier (default: `1.0`; range `0.5–2.0`). Uses model-level duration scaling — pitch is unaffected. |
 | `WHISPER_MODEL_ID` | Whisper model ID (default: `mlx-community/whisper-large-v3-mlx`) |
+| `VOXTRAL_MODEL_ID` | Voxtral TTS model ID (default: `mlx-community/Voxtral-4B-TTS-2603-mlx-6bit`) |
+| `FISH_SPEECH_CHECKPOINT_PATH` | Fish Speech model checkpoint dir (default: `checkpoints/fish-speech-1.5`) |
+| `FISH_SPEECH_DECODER_CHECKPOINT` | Fish Speech VQGAN decoder checkpoint path (default: `checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth`) |
+| `FISH_SPEECH_PRECISION` | Fish Speech inference precision (default: `bfloat16`) |
+| `FISH_SPEECH_DEVICE` | Fish Speech device override; auto-detected (MPS → CUDA → CPU) if unset |
+| `FISH_SPEECH_DECODER_CONFIG` | Fish Speech decoder config key (default: `firefly_gan_vq`) |
+| `FISH_SPEECH_REF_AUDIO` | Path to reference audio file for Fish Speech speaker cloning (optional) |
 | `YTDLP_COOKIES_BROWSER` | Browser yt-dlp reads cookies from for auto-translated captions (default: `safari`). Set to `none` to disable. Valid: `safari`, `chrome`, `firefox`, `chromium`, `edge` |
 
 Load with `load_dotenv()` at module top, then `os.getenv("KEY")`. Never hardcode credentials.
@@ -274,6 +287,7 @@ Add new packages to `pyproject.toml` only — do not create a separate `requirem
 - Downloaded audio is saved permanently to `yt_audio/<video_id>.mp3` and **reused on retry** — no re-download if the file exists with non-zero size.
 - Checkpoint files expire after 24 hours and are purged at startup. Delete a checkpoint manually to force a full reprocess.
 - YouTube playlist URLs must be normalised to `watch?v=ID` at the `load_content` entry point — never pass raw playlist URLs to yt-dlp or the transcript API.
+- **FFmpeg `filter_complex` + `force_style`**: When the `filter_complex` string is passed as a Python subprocess list argument (not through a shell), single quotes inside it are **literal characters** interpreted by FFmpeg's own filter option parser, NOT by the shell. FFmpeg's parser treats `'...'` as a quoted block that consumes everything — including `:` separators — up to the matching `'`. This merges `force_style` into the filename value, leaving `[vout]` dangling (`exit 234`, `"Invalid argument"`). **Never wrap the SRT path or `force_style` value in single quotes.** Instead, escape characters special to the filter parser (`\`, `'`, `:`, `[`, `]`, `;`) with a backslash prefix. The correct form is `subtitles=/escaped/path.srt:force_style=FontSize=24[vout]` — no quotes anywhere. Never use ASS colour syntax (`&HRRGGBB&`) either; FFmpeg's parser treats `&` as a token separator.
 
 ---
 
