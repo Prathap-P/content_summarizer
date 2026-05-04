@@ -768,6 +768,28 @@
             margin-top: 6px;
         }
 
+        .processing-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #e0e0e0;
+            border-top-color: #4fc3f7;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .processing-status-row {
+            display: flex;
+            align-items: center;
+            margin-top: 6px;
+            font-size: 11px;
+            color: #888;
+        }
+
         .queue-remove-btn {
             width: 100%;
             padding: 5px 0;
@@ -1100,11 +1122,10 @@
             
             <div class="queue-section">
                 <div class="label">⚙️ Processing</div>
-                <textarea 
-                    id="techProcessingList" 
-                    readonly
-                    placeholder="Processing..."
-                ></textarea>
+                <textarea id="techProcessingList" style="display:none"></textarea>
+                <div id="techProcessingCards" class="queue-cards-container">
+                    <div class="queue-empty">Nothing processing</div>
+                </div>
             </div>
             
             <div class="queue-section">
@@ -1166,11 +1187,10 @@
             
             <div class="queue-section">
                 <div class="label">⚙️ Processing</div>
-                <textarea 
-                    id="socialProcessingList" 
-                    readonly
-                    placeholder="Processing..."
-                ></textarea>
+                <textarea id="socialProcessingList" style="display:none"></textarea>
+                <div id="socialProcessingCards" class="queue-cards-container">
+                    <div class="queue-empty">Nothing processing</div>
+                </div>
             </div>
             
             <div class="queue-section">
@@ -1232,11 +1252,10 @@
             
             <div class="queue-section">
                 <div class="label">⚙️ Processing</div>
-                <textarea 
-                    id="scienceProcessingList" 
-                    readonly
-                    placeholder="Processing..."
-                ></textarea>
+                <textarea id="scienceProcessingList" style="display:none"></textarea>
+                <div id="scienceProcessingCards" class="queue-cards-container">
+                    <div class="queue-empty">Nothing processing</div>
+                </div>
             </div>
             
             <div class="queue-section">
@@ -1526,6 +1545,7 @@
             ['tech', 'social', 'science'].forEach(cat => {
                 renderQueueCards(cat, 'transcript');
                 renderQueueCards(cat, 'audio');
+                renderProcessingCard(cat);
             });
         }
         
@@ -1697,6 +1717,7 @@
             // so hasActiveQueueItems() reflects reality when checked elsewhere
             const processingEl = document.getElementById(`${category}ProcessingList`);
             processingEl.value = `[${fetch_mode === 'audio' ? 'A' : 'T'}] ${url}`;
+            renderProcessingCard(category);
             saveQueuesToStorage();
             
             // Ensure wake lock is held now that processing list is populated
@@ -1745,6 +1766,7 @@
             } finally {
                 // Clear processing list
                 processingEl.value = '';
+                renderProcessingCard(category);
                 isProcessing = false;
                 saveQueuesToStorage();
                 
@@ -1997,6 +2019,54 @@
             }).join('');
         }
 
+        function renderProcessingCard(category) {
+            const container = document.getElementById(`${category}ProcessingCards`);
+            if (!container) return;
+            const textarea = document.getElementById(`${category}ProcessingList`);
+            const raw = textarea ? textarea.value.trim() : '';
+            if (!raw) {
+                container.innerHTML = '<div class="queue-empty">Nothing processing</div>';
+                return;
+            }
+            // raw format: "[T] https://..." or "[A] https://..."
+            const fetch_mode = raw.startsWith('[A]') ? 'audio' : 'transcript';
+            const url = raw.replace(/^\[(A|T)\]\s*/, '');
+            const videoId = extractVideoId(url);
+            const title = videoId ? (queueTitleCache[videoId] || null) : null;
+
+            if (videoId && !(videoId in queueTitleCache)) {
+                fetchAndCacheQueueTitle(videoId);
+            }
+
+            const mediaHtml = videoId
+                ? `<img class="failed-thumbnail" src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" alt="thumbnail" onerror="this.style.display='none'">`
+                : `<div class="failed-thumbnail-placeholder">📰</div>`;
+            const titleHtml = videoId
+                ? (title
+                    ? `<div class="failed-title" title="${htmlEscape(title)}">${htmlEscape(title)}</div>`
+                    : `<div class="failed-title-loading">Loading title…</div>`)
+                : '';
+
+            const badgeClass = fetch_mode === 'audio' ? 'badge-audio' : 'badge-transcript';
+            const badgeText = fetch_mode === 'audio' ? '[A]' : '[T]';
+
+            container.innerHTML = `
+            <div class="queue-card">
+                ${mediaHtml}
+                <div class="queue-card-body">
+                    ${titleHtml}
+                    <div class="queue-card-header">
+                        <span class="failed-badge ${badgeClass}">${badgeText}</span>
+                        <span class="queue-card-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
+                    </div>
+                    <div class="processing-status-row">
+                        <span class="processing-spinner"></span>
+                        Processing…
+                    </div>
+                </div>
+            </div>`;
+        }
+
         async function fetchAndCacheQueueTitle(videoId) {
             if (queueTitleCache[videoId] !== undefined) return;
             queueTitleCache[videoId] = null; // mark as in-progress to prevent duplicate fetches
@@ -2011,6 +2081,7 @@
                 ['tech', 'social', 'science'].forEach(cat => {
                     renderQueueCards(cat, 'transcript');
                     renderQueueCards(cat, 'audio');
+                    renderProcessingCard(cat);
                 });
             } catch (_) {
                 // oEmbed unavailable — cards show without title
