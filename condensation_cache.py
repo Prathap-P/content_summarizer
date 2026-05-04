@@ -32,7 +32,7 @@ from urllib.parse import urlparse, urlencode, parse_qsl
 
 CACHE_DIR = Path("condensation_cache")
 CHECKPOINT_TTL_HOURS = 24
-MAX_RETRIES_PER_STEP = 3
+MAX_RETRIES_PER_STEP = 30
 
 # Query-string keys that are tracking noise and must be stripped before hashing
 _TRACKING_PREFIXES = ("utm_", "fbclid", "gclid", "ref", "source", "campaign")
