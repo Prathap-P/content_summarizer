@@ -197,15 +197,15 @@ def condense_content(
                     checkpoint["reduce_batches_total"] = 1
                     _save()
 
-            # TTS polish pass (runs for both fresh and partial-resume paths)
-            tts_output = _run_tts_pass(
-                cleaned_reduce, current_model, "0", checkpoint, checkpoint_key, _prompts
-            )
-            if _has_checkpoint:
-                checkpoint.setdefault("tts_results", {})["0"] = tts_output
-                _save()
+            # TTS polish pass — TEMPORARILY DISABLED for output length testing
+            # tts_output = _run_tts_pass(
+            #     cleaned_reduce, current_model, "0", checkpoint, checkpoint_key, _prompts
+            # )
+            # if _has_checkpoint:
+            #     checkpoint.setdefault("tts_results", {})["0"] = tts_output
+            #     _save()
 
-            final_output = tts_output
+            final_output = cleaned_reduce
 
     else:
         # ---- Multi-batch reduce ----
@@ -318,17 +318,17 @@ def condense_content(
                     checkpoint.setdefault("reduce_results", {})[str_batch] = cleaned_batch
                     _save()
 
-            # TTS polish pass — runs for both Case 2 (partial resume) and Case 3 (fresh)
-            tts_batch = _run_tts_pass(
-                cleaned_batch, current_model, str_batch, checkpoint, checkpoint_key, _prompts
-            )
-            if _has_checkpoint:
-                checkpoint.setdefault("tts_results", {})[str_batch] = tts_batch
-                _save()
+            # TTS polish pass — TEMPORARILY DISABLED for output length testing
+            # tts_batch = _run_tts_pass(
+            #     cleaned_batch, current_model, str_batch, checkpoint, checkpoint_key, _prompts
+            # )
+            # if _has_checkpoint:
+            #     checkpoint.setdefault("tts_results", {})[str_batch] = tts_batch
+            #     _save()
 
-            batch_results.append(tts_batch)
+            batch_results.append(cleaned_batch)
             previous_context = cleaned_batch  # use dense reduce result for LLM context continuity
-            print(f"[SUCCESS] REDUCE+TTS batch {batch_idx + 1} complete: tts={len(tts_batch)} chars")
+            print(f"[SUCCESS] REDUCE batch {batch_idx + 1} complete: {len(cleaned_batch)} chars")
 
         final_output = "\n\n".join(batch_results)
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] All REDUCE batches combined: {len(final_output)} chars")
