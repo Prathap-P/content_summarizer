@@ -2,7 +2,9 @@
 # ### Initialize Kokoro TTS Pipeline
 
 # %%
+
 import os
+import re
 import torch
 import warnings
 from kokoro import KPipeline
@@ -27,6 +29,16 @@ pipeline = None
 
 # %%
 sr = 24000
+
+# %%
+
+def _sanitize_filename(s: str) -> str:
+    """Strip chars unsafe for filenames; replace spaces with underscore; truncate to 60 chars."""
+    if not s:
+        return ""
+    s = re.sub(r'[^\w\s-]', '', s)
+    s = re.sub(r'\s+', '_', s.strip())
+    return s[:60].strip('_')
 
 # %%
 def generate_audio(text):
