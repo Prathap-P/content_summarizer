@@ -29,3 +29,18 @@ FISH_SPEECH_DEVICE = os.getenv("FISH_SPEECH_DEVICE", "")
 FISH_SPEECH_PRECISION = os.getenv("FISH_SPEECH_PRECISION", "bfloat16")
 FISH_SPEECH_REF_AUDIO = os.getenv("FISH_SPEECH_REF_AUDIO", "")
 VOXTRAL_MODEL_ID = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-6bit")
+
+# VibeVoice TTS backend configuration
+VIBEVOICE_MODEL_PATH = os.getenv("VIBEVOICE_MODEL_PATH", "./models/VibeVoice-Realtime-0.5B")
+VIBEVOICE_VOICES_DIR = os.getenv("VIBEVOICE_VOICES_DIR", "./VibeVoice/demo/voices/streaming_model")
+VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "en-Davis_man")
+
+def _parse_vibevoice_ddpm_steps() -> int:
+    raw = os.getenv("VIBEVOICE_DDPM_STEPS", "30")
+    try:
+        return max(1, int(float(raw)))
+    except ValueError:
+        print(f"[WARNING] VIBEVOICE_DDPM_STEPS='{raw}' is not a valid integer — falling back to 30")
+        return 30
+
+VIBEVOICE_DDPM_STEPS: int = _parse_vibevoice_ddpm_steps()
