@@ -209,7 +209,7 @@ dependencies = [
     "tornado==6.5.4",
     "tqdm==4.67.1",
     "traitlets==5.14.3",
-    "transformers==4.57.3",
+    "transformers==4.51.3",
     "tree-sitter==0.24.0",
     "tree-sitter-c-sharp==0.23.1",
     "tree-sitter-embedded-template==0.23.2",
@@ -232,9 +232,6 @@ dependencies = [
     "yt-dlp",
     "mlx-whisper",
     "accelerate==1.13.0",
-    "qwen-omni-utils==0.0.9",
-    "soxr==1.0.0",
-    "torchvision==0.19.1",
     "zipp==3.23.0",
     "fish-speech",
 ]
@@ -244,7 +241,7 @@ packages = []
 
 [tool.uv]
 override-dependencies = [
-    "transformers==4.57.3",
+    "transformers==4.51.3",
     "huggingface-hub==0.34.3",
     "protobuf==5.29.5",
 ]
