@@ -368,7 +368,14 @@ def load_content():
                 print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] TTS voice selected: {tts_voice}")
 
             try:
-                audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "", tts_voice)
+
+                _yt_title = checkpoint.get("video_title", "") if checkpoint else ""
+                if not _yt_title and mode == 'youtube' and _video_id:
+                    _yt_title = _fetch_youtube_title(_video_id)
+                    if _yt_title and checkpoint:
+                        checkpoint["video_title"] = _yt_title
+                        save_checkpoint(checkpoint_key, checkpoint)
+                audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "", tts_voice, _video_id or "", _yt_title)
                 audio_file = os.path.basename(audio_file_path)
                 # Save audio path BEFORE building the response to avoid losing it on crash
                 checkpoint["audio_file_path"] = str(audio_file_path)
