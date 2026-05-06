@@ -9,10 +9,8 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
-
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
-
 
 def asr_worker(url: str, video_id: str) -> str:
     """Transcribe YouTube audio in an isolated subprocess.
@@ -32,8 +30,7 @@ def asr_worker(url: str, video_id: str) -> str:
     print(f"[INFO]    [{_ts()}] [ASR subprocess] Complete, len={len(result)} chars")
     return result
 
-
-def tts_worker(text: str, output_path: str, voice: str = "") -> str:
+def tts_worker(text: str, output_path: str, voice: str = "", video_id: str = "", video_title: str = "") -> str:
     """Generate TTS audio and save to file in an isolated subprocess.
 
     Reads TTS_BACKEND env var to dispatch to the correct backend.
@@ -45,32 +42,39 @@ def tts_worker(text: str, output_path: str, voice: str = "") -> str:
         output_path: Unused; kept for call-site compatibility.
         voice: Optional voice override for the voxtral backend.  Empty string
             means "use the backend default".
+        video_id: YouTube video ID used for output filename (empty → timestamp fallback).
+        video_title: YouTube video title used for output filename.
     """
     load_dotenv()
     backend = os.getenv("TTS_BACKEND", "qwen_omni")
-    print(f"[INFO]    [{_ts()}] [TTS subprocess] Starting, backend={backend}, chars={len(text)}, voice={voice!r}")
+    print(f"[INFO]    [{_ts()}] [TTS subprocess] Starting, backend={backend}, chars={len(text)}, voice={voice!r}, video_id={video_id!r}")
+
     from kokoro_tts import create_audio_file
     if backend == "qwen_omni":
         from qwen_omni_backend import generate_audio_qwen as generate_audio
         audio = generate_audio(text)
-        final_path = create_audio_file(audio)
+        final_path = create_audio_file(audio, video_id=video_id, video_title=video_title)
     elif backend == "fish_speech":
         from fish_speech_tts import generate_audio_fish
         audio, sample_rate = generate_audio_fish(text)
-        final_path = create_audio_file(audio, sample_rate=sample_rate)
+        final_path = create_audio_file(audio, sample_rate=sample_rate, video_id=video_id, video_title=video_title)
     elif backend == "voxtral":
         from voxtral_tts import generate_audio as generate_audio_voxtral
         audio = generate_audio_voxtral(text, voice=voice if voice else None)
-        final_path = create_audio_file(audio)
+        final_path = create_audio_file(audio, video_id=video_id, video_title=video_title)
+
+    elif backend == "vibevoice":
+        from vibevoice_tts import generate_audio as generate_audio_vibevoice
+        audio, sample_rate = generate_audio_vibevoice(text, voice=voice if voice else "")
+        final_path = create_audio_file(audio, sample_rate=sample_rate, video_id=video_id, video_title=video_title)
     else:
         if backend != "kokoro":
             print(f"[WARNING] [{_ts()}] [TTS subprocess] Unknown TTS_BACKEND={backend!r}, falling back to kokoro")
         from kokoro_tts import generate_audio
         audio = generate_audio(text)
-        final_path = create_audio_file(audio)
+        final_path = create_audio_file(audio, video_id=video_id, video_title=video_title)
     print(f"[INFO]    [{_ts()}] [TTS subprocess] Audio saved: {final_path}")
     return final_path
-
 
 def translate_worker(video_id: str, raw_hindi_text: str) -> str:
     """Translate Hindi text to English in an isolated subprocess."""
