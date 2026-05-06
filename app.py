@@ -117,6 +117,18 @@ def create_runnable_chain(mode):
 def index():
     return render_template('index.html')
 
+def _fetch_youtube_title(video_id: str) -> str:
+    """Fetch YouTube video title via oEmbed. Returns empty string on failure."""
+    try:
+        import urllib.request
+        import json as _json
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        with urllib.request.urlopen(oembed_url, timeout=5) as resp:
+            data = _json.loads(resp.read().decode())
+            return data.get("title", "")
+    except Exception:
+        return ""
+
 @app.route('/load_content', methods=['POST'])
 def load_content():
     """Load content, condense it using condenser_service, and prepare for Q&A"""
