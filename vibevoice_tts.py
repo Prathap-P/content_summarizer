@@ -329,3 +329,29 @@ def generate_audio(text: str, voice: str = "") -> tuple[np.ndarray, int]:
     audio, sample_rate = _tts.generate(text, voice=resolved_voice)
     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] [VIBEVOICE_TTS] Audio generated: {len(audio)/sample_rate:.2f}s at {sample_rate}Hz")
     return audio, sample_rate
+
+
+def list_voices(voices_dir: str = "") -> list[str]:
+    """Return names of all available VibeVoice preset voices.
+
+    Scans the voices directory for .pt and .wav files and returns
+    their stems as voice names. Useful for discovering what presets
+    shipped with the cloned VibeVoice repo before loading the model.
+
+    Args:
+        voices_dir: path to the voice presets directory.
+                    Defaults to VIBEVOICE_VOICES_DIR env var.
+
+    Returns:
+        Sorted list of voice name strings (stems without extension).
+    """
+    import pathlib
+    scan_dir = pathlib.Path(voices_dir or VIBEVOICE_VOICES_DIR)
+    if not scan_dir.exists():
+        print(f"[WARNING] [VIBEVOICE_TTS] Voices directory not found: {scan_dir}")
+        return []
+    names: list[str] = sorted(
+        p.stem for p in scan_dir.iterdir()
+        if p.suffix in {".pt", ".wav"} and not p.name.startswith(".")
+    )
+    return names

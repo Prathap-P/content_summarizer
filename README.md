@@ -143,6 +143,42 @@ In `kokoro_tts.py`:
 - `voice`: 'af_heart'
 - `sr`: 24000 (sample rate)
 
+### TTS Backends
+
+The active TTS backend is selected via the `TTS_BACKEND` environment variable:
+
+| `TTS_BACKEND` | Model | Notes |
+|---|---|---|
+| `kokoro` | Kokoro 0.9.x | Default; fast; American English voices |
+| `voxtral` | Voxtral-4B-TTS | MLX; Apple Silicon only |
+| `fish_speech` | Fish Speech 1.5 | Supports reference-audio voice cloning |
+| `vibevoice` | VibeVoice-Realtime-0.5B | Microsoft; voice-preset KV-cache; low latency |
+
+#### VibeVoice Setup
+
+```bash
+# 1. Clone the VibeVoice repo (provides voice presets and the package)
+git clone https://github.com/microsoft/VibeVoice.git
+
+# 2. Install VibeVoice + project deps
+pip install -e "./VibeVoice[streamingtts]" --index-url https://pypi.org/simple/
+pip install -e . --index-url https://pypi.org/simple/
+
+# 3. Download model weights (~1.5 GB)
+python -c "from huggingface_hub import snapshot_download; \
+snapshot_download('microsoft/VibeVoice-Realtime-0.5B', local_dir='./models/VibeVoice-Realtime-0.5B')"
+```
+
+Required `.env` keys:
+
+```
+TTS_BACKEND=vibevoice
+VIBEVOICE_MODEL_PATH=./models/VibeVoice-Realtime-0.5B
+VIBEVOICE_VOICES_DIR=./VibeVoice/demo/voices/streaming_model
+VIBEVOICE_VOICE=en-Davis_man
+VIBEVOICE_DDPM_STEPS=30
+```
+
 ### Memory
 - `ConversationBufferWindowMemory` retains last 100 conversation turns
 

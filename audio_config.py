@@ -30,7 +30,16 @@ FISH_SPEECH_PRECISION = os.getenv("FISH_SPEECH_PRECISION", "bfloat16")
 FISH_SPEECH_REF_AUDIO = os.getenv("FISH_SPEECH_REF_AUDIO", "")
 VOXTRAL_MODEL_ID = os.getenv("VOXTRAL_MODEL_ID", "mlx-community/Voxtral-4B-TTS-2603-mlx-6bit")
 
-# VibeVoice TTS backend configuration
+# ── VibeVoice TTS backend ────────────────────────────────────────────────────
+# Model:  microsoft/VibeVoice-Realtime-0.5B
+# Voices: .pt KV-cache tensors shipped with the cloned VibeVoice repo
+# Requires: pip install -e "./VibeVoice[streamingtts]"
+#
+# VIBEVOICE_MODEL_PATH  — local HuggingFace snapshot directory
+# VIBEVOICE_VOICES_DIR  — directory containing <voice>.pt preset files
+# VIBEVOICE_VOICE       — default voice name (stem of a .pt file or built-in)
+# VIBEVOICE_DDPM_STEPS  — DDPM inference steps; higher = slower but smoother
+#                         recommended range: 20–50 (default 30)
 VIBEVOICE_MODEL_PATH = os.getenv("VIBEVOICE_MODEL_PATH", "./models/VibeVoice-Realtime-0.5B")
 VIBEVOICE_VOICES_DIR = os.getenv("VIBEVOICE_VOICES_DIR", "./VibeVoice/demo/voices/streaming_model")
 VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "en-Davis_man")

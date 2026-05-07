@@ -20,4 +20,6 @@ youtube_quota.json
 /website_summarizer.egg-info/
 fish-speech-src/
 CHANGELOG.md
+models/
+VibeVoice/
 .github/instructions/wmt-copilot.instructions.md
