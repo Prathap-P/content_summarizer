@@ -18,10 +18,11 @@ utils.py                       # remove_thinking_tokens(), backup file helpers
 audio_config.py                # ASR/TTS backend selection via env vars
 process_runner.py              # run_in_subprocess() — spawn-isolated model runner, Semaphore(1)
 model_worker.py                # asr_worker, tts_worker, translate_worker — picklable top-level fns
-kokoro_tts.py                  # generate_audio(), create_audio_file() — Kokoro backend (lazy-loaded)
+kokoro_tts.py                  # generate_audio(), create_audio_file() — Kokoro backend (lazy-loaded); all backends write via create_audio_file()
 voxtral_tts.py                 # Voxtral TTS backend (mlx-audio, Apple Silicon)
 fish_speech_tts.py             # Fish Speech 1.5 TTS backend (supports reference audio)
-qwen_omni_backend.py           # generate_audio_qwen(), get_transcript_via_qwen() — Qwen2.5-Omni backend
+vibevoice_tts.py               # VibeVoice-Realtime-0.5B TTS backend; generate_audio(), list_voices()
+qwen_omni_backend.py           # generate_audio_qwen(), get_transcript_via_qwen() — Qwen2.5-Omni backend (inactive)
 email_sender.py                # send_email_with_audio/attachments
 telegram_sender.py             # send_telegram_with_audio/attachments
 video_producer.py              # Local video production: SRT, thumbnail (Pillow), MP4 (FFmpeg)
@@ -39,7 +40,7 @@ yt_audio/                      # Audio downloaded by yt-dlp for Whisper transcri
 
 ### LLM Usage
 - All LLM instances live in `llm_models.py`. Use `get_model("model_key")` everywhere else — never instantiate `ChatOpenAI`/`ChatGroq` inline.
-- Local models connect to **LM Studio** at `http://localhost:1234/v1`; check with `check_llm_server()` before requests.
+- Local models connect to **LM Studio** at `http://localhost:8080/v1`; check with `check_llm_server()` before requests.
 - Local model API key is always the dummy string `"test"`.
 - Default model: `mlx_community_qwen_stream_local_llm`.
 
@@ -55,8 +56,8 @@ The ASR and TTS backends are configurable via environment variables — no code 
 
 | Variable | Default | Options |
 |---|---|---|
-| `ASR_BACKEND` | `qwen_omni` | `qwen_omni`, `whisper` |
-| `TTS_BACKEND` | `qwen_omni` | `qwen_omni`, `kokoro`, `voxtral`, `fish_speech` |
+| `ASR_BACKEND` | `whisper` | `whisper`, `qwen_omni` |
+| `TTS_BACKEND` | `kokoro` | `kokoro`, `vibevoice`, `voxtral`, `fish_speech`, `qwen_omni` |
 | `QWEN_OMNI_MODEL_ID` | `Qwen/Qwen2.5-Omni-3B` | Any HF model ID |
 | `QWEN_OMNI_SPEAKER` | `Chelsie` | `Chelsie` (female), `Ethan` (male) |
 
@@ -69,10 +70,16 @@ import model_worker
 raw_content = run_in_subprocess(model_worker.asr_worker, url, video_id)
 
 # TTS — returns file path string; numpy array never crosses process boundary
-audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "")
+audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "", tts_voice, video_id, video_title)
 ```
 
 `model_worker.py` reads `ASR_BACKEND` / `TTS_BACKEND` env vars and dispatches to the correct backend inside the subprocess. `audio_config.py` values are still the source of truth — no call-site changes needed to switch backends.
+
+`tts_worker` signature: `(text, output_path, voice="", video_id="", video_title="")`. All 5 backends call `create_audio_file()` from `kokoro_tts.py` which handles the filename:
+- YouTube content: `{video_id}_{sanitized_title}.wav` (or `{video_id}.wav` if no title)
+- Everything else: `kokoro_500word_{timestamp}.wav`
+
+`_fetch_youtube_title(video_id)` in `app.py` fetches the title via oEmbed and caches it in the checkpoint.
 
 ### Qwen2.5-Omni Backend (`qwen_omni_backend.py`)
 
@@ -211,7 +218,7 @@ Use structured `[LEVEL]` prefixes consistently. Do not use the `logging` module.
 | `QWEN_OMNI_MODEL_ID` | HuggingFace model ID (default: `Qwen/Qwen2.5-Omni-3B`) |
 | `QWEN_OMNI_SPEAKER` | TTS voice: `Chelsie` (default, female) or `Ethan` (male) |
 | `DEFAULT_MODEL_KEY` | Startup LLM key from `models_collection` (default: `mlx_community_qwen_stream_local_llm`) |
-| `LM_STUDIO_BASE_URL` | LM Studio OpenAI-compatible endpoint (default: `http://localhost:1234/v1`) |
+| `LM_STUDIO_BASE_URL` | LM Studio OpenAI-compatible endpoint (default: `http://localhost:8080/v1`) |
 | `GROQ_MODEL_ID` | Groq model ID (default: `openai/gpt-oss-20b`) |
 | `GEMMA_MODEL_ID` | Gemma local model ID (default: `google/gemma-3-27b`) |
 | `NEMOTRON_MODEL_ID` | Nemotron local model ID (default: `nvidia/nemotron-3-nano`) |
@@ -232,6 +239,10 @@ Use structured `[LEVEL]` prefixes consistently. Do not use the `logging` module.
 | `FISH_SPEECH_DEVICE` | Fish Speech device override; auto-detected (MPS → CUDA → CPU) if unset |
 | `FISH_SPEECH_DECODER_CONFIG` | Fish Speech decoder config key (default: `firefly_gan_vq`) |
 | `FISH_SPEECH_REF_AUDIO` | Path to reference audio file for Fish Speech speaker cloning (optional) |
+| `VIBEVOICE_MODEL_PATH` | Local HuggingFace snapshot dir (default: `./models/VibeVoice-Realtime-0.5B`) |
+| `VIBEVOICE_VOICES_DIR` | Directory containing `.pt` voice preset files (default: `./VibeVoice/demo/voices/streaming_model`) |
+| `VIBEVOICE_VOICE` | Default voice name — stem of a `.pt` file (default: `en-Davis_man`) |
+| `VIBEVOICE_DDPM_STEPS` | DDPM inference steps; 20–50 recommended (default: `30`) |
 | `YTDLP_COOKIES_BROWSER` | Browser yt-dlp reads cookies from for auto-translated captions (default: `safari`). Set to `none` to disable. Valid: `safari`, `chrome`, `firefox`, `chromium`, `edge` |
 
 Load with `load_dotenv()` at module top, then `os.getenv("KEY")`. Never hardcode credentials.
@@ -273,6 +284,10 @@ Add new packages to `pyproject.toml` only — do not create a separate `requirem
 - **LM Studio must be running on port 1234** before `app.py` starts if using local models.
 - **Kokoro TTS** needs CUDA or Apple Silicon MPS; CPU fallback is very slow.
 - **Kokoro + PyTorch 2.11+** emits a `UserWarning` about tensor resize (`resized since it had shape []`). This is a Kokoro `0.9.4` internal bug — audio is generated correctly. It is suppressed with `warnings.filterwarnings("ignore", ...)` scoped to the generator loop in `kokoro_tts.py`.
+- **VibeVoice** requires `transformers==4.51.3` (hard-pinned). Do NOT upgrade — the `streamingtts` extras pin it. Use `VibeVoice-Realtime-0.5B` only; the `1.5B` model has incompatible KV head dimensions (128 vs 64) and will crash with `RuntimeError: Sizes of tensors must match`.
+- **VibeVoice voice presets** are `.pt` KV-cache tensors in `./VibeVoice/demo/voices/streaming_model/`. `AudioStreamer` is not exported from `vibevoice.__init__` — `vibevoice_tts.py` discovers it dynamically across `vibevoice.schedule`, `vibevoice.modular`, `vibevoice`.
+- **VibeVoice on MPS**: uses `torch.float32` (bfloat16 not reliable on MPS). `flash_attention_2` is CUDA-only — never install on macOS. Model falls back to `sdpa` automatically.
+- **`torch.load(..., weights_only=False)`** is intentional for VibeVoice voice preset `.pt` files — they are trusted KV-cache tensors from the cloned repo, not arbitrary pickles.
 - **Qwen2.5-Omni** model (~7 GB) downloads from HuggingFace on first use to `~/.cache/huggingface/hub/`. LM Studio does NOT need to be running for the Qwen backend.
 - **Qwen Omni system message `content` must be a list of dicts**, not a bare string. `process_mm_info` iterates content items by dict key — a plain string causes `TypeError: string indices must be integers`.
 - **`process_mm_info` and `model.generate()` both need `use_audio_in_video=False`** for audio-only / text-only inputs. Missing it from either call causes the model's video decoder to activate and fail.
