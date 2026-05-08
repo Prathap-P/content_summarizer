@@ -56,7 +56,7 @@ current_model = get_model(current_model_key)
 def check_llm_server():
     """Check if the local LLM server is running"""
     try:
-        response = requests.get("http://localhost:1234/v1/models", timeout=2)
+        response = requests.get("http://localhost:8080/v1/models", timeout=2)
         return response.status_code == 200
     except:
         return False
@@ -488,6 +488,8 @@ def load_content():
             'from_cache': _cache_hit,
             'video_id': _video_id,
             'tts_script': tts_input,
+
+            'checkpoint_key': checkpoint_key,
             'success': True
         })
 
@@ -989,7 +991,7 @@ def stream_chat():
     if not check_llm_server():
         print("[ERROR] LLM server not accessible")
         return jsonify({
-            'error': 'Local LLM server is not running. Please start LM Studio and load a model at http://localhost:1234'
+            'error': 'Local LLM server is not running. Please start LM Studio and load a model at http://localhost:8080'
         }), 503
 
     data = request.json
@@ -1235,6 +1237,20 @@ def publish_youtube_route():
     except Exception as e:
         print(f"[ERROR]   /publish_youtube failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/clear_audio', methods=['POST'])
+def clear_audio():
+    data = request.json or {}
+    checkpoint_key = data.get('checkpoint_key', '').strip()
+    if not checkpoint_key:
+        return jsonify({'success': False, 'error': 'checkpoint_key required'}), 400
+    checkpoint = load_checkpoint(checkpoint_key)
+    if checkpoint is None:
+        return jsonify({'success': False, 'error': 'Checkpoint not found'}), 404
+    checkpoint['audio_file_path'] = None
+    save_checkpoint(checkpoint_key, checkpoint)
+    print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Cleared audio_file_path for checkpoint {checkpoint_key}")
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     purge_expired_checkpoints()
