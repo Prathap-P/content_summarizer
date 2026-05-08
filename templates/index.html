@@ -673,6 +673,20 @@
             background: #555;
             cursor: not-allowed;
         }
+
+        .finished-regen-btn {
+            background: #2d5a27;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            margin-left: 6px;
+            white-space: nowrap;
+        }
+        .finished-regen-btn:hover:not(:disabled) { background: #3d7a37; }
+        .finished-regen-btn:disabled { opacity: 0.6; cursor: not-allowed; }
         .finished-yt-status {
             font-size: 11px;
             color: #aaa;
@@ -1752,7 +1766,7 @@
                     window._lastLoadResponse = data;
                     const itemTitle = data.video_id ? `YouTube: ${data.video_id}` : url;
 
-                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id, data.audio_file || '', data.tts_script || data.content || '', itemTitle);
+                    moveToFinished(url, category, fetch_mode, data.from_cache, data.video_id, data.audio_file || '', data.tts_script || data.content || '', itemTitle, data.checkpoint_key || '');
                 } else {
                     // Failed - move to failed list
                     const errorMsg = data.error || 'Unknown error';
@@ -1782,7 +1796,7 @@
 
         // Move URL to finished list
 
-        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null, audioFile = '', ttsScript = '', title = '') {
+        function moveToFinished(url, category, fetch_mode, fromCache = false, videoId = null, audioFile = '', ttsScript = '', title = '', checkpointKey = '') {
             // Keep textarea in sync for localStorage backward compat
             const finishedListEl = document.getElementById(`${category}FinishedList`);
             const currentFinished = finishedListEl.value.trim();
@@ -1793,7 +1807,8 @@
 
             // Add to finishedData for card rendering
             const uid = Math.random().toString(36).slice(2, 9);
-            finishedData[category].push({ uid, url, fetch_mode, fromCache, videoId, ytStatus: null, ytVideoId: null, audioFile, ttsScript, title });
+
+            finishedData[category].push({ uid, url, fetch_mode, fromCache, videoId, ytStatus: null, ytVideoId: null, audioFile, ttsScript, title, checkpointKey });
             saveQueuesToStorage();
             renderFinishedCards(category);
             if (videoId) fetchFinishedVideoTitle(uid, category, videoId);
@@ -1937,6 +1952,12 @@
                 }
                 const ytErrorHtml = item.ytError ? `<div class="finished-yt-error">${htmlEscape(item.ytError)}</div>` : '';
 
+                const regenBtnHtml = item.checkpointKey
+                    ? (item._regenLoading
+                        ? `<button class="finished-regen-btn" disabled>⏳ Regen…</button>`
+                        : `<button class="finished-regen-btn" onclick="regenAudio('${uid}','${category}')">🔄 Regen Audio</button>`)
+                    : `<span class="finished-yt-status" style="color:#888">No checkpoint</span>`;
+
                 const mediaHtml = videoId
                     ? `<img class="failed-thumbnail" src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" alt="thumbnail" onerror="this.style.display='none'">`
                     : `<div class="failed-thumbnail-placeholder">📰</div>`;
@@ -1955,13 +1976,54 @@
                             <span class="finished-badge ${badgeClass}">${badgeText}</span>
                             <span class="finished-card-url" title="${htmlEscape(url)}">${htmlEscape(url)}</span>
                         </div>
+
                         <div class="finished-card-actions">
                             ${ytBtnHtml}
+                            ${regenBtnHtml}
                             ${ytErrorHtml}
                         </div>
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        async function regenAudio(uid, category) {
+            const item = (finishedData[category] || []).find(i => i.uid === uid);
+            if (!item || !item.checkpointKey) return;
+
+            item._regenLoading = true;
+            renderFinishedCards(category);
+
+            try {
+                const res = await fetch('/clear_audio', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ checkpoint_key: item.checkpointKey })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'clear_audio failed');
+
+                // Re-queue into the correct queue textarea
+                const queueElId = item.fetch_mode === 'audio'
+                    ? `${category}AudioQueueList`
+                    : `${category}QueueList`;
+                const queueEl = document.getElementById(queueElId);
+                if (!queueEl) throw new Error(`Queue element '${queueElId}' not found`);
+
+                // Remove from finished — it will come back when the queue re-processes it
+                finishedData[category] = finishedData[category].filter(i => i.uid !== uid);
+
+                const existing = queueEl.value.trim();
+                queueEl.value = existing ? `${existing}\n${item.url}` : item.url;
+
+                saveQueuesToStorage();
+                renderFinishedCards(category);
+                showToast(`↩️ Re-queued for audio regen`);
+            } catch (err) {
+                item._regenLoading = false;
+                renderFinishedCards(category);
+                showToast(`❌ Regen failed: ${err.message}`);
+            }
         }
 
         function renderQueueCards(category, queueType) {
