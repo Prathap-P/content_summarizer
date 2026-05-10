@@ -21,7 +21,8 @@ Checkpoint stages (in order):
 import hashlib
 import json
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, urlencode, parse_qsl
@@ -31,7 +32,6 @@ from urllib.parse import urlparse, urlencode, parse_qsl
 # ---------------------------------------------------------------------------
 
 CACHE_DIR = Path("condensation_cache")
-CHECKPOINT_TTL_HOURS = 24
 MAX_RETRIES_PER_STEP = 30
 
 # Query-string keys that are tracking noise and must be stripped before hashing
@@ -113,18 +113,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _expires_iso() -> str:
-    return (datetime.now(timezone.utc) + timedelta(hours=CHECKPOINT_TTL_HOURS)).isoformat()
-
-
-def _is_expired(data: dict) -> bool:
-    try:
-        expires_at = datetime.fromisoformat(data["expires_at"])
-        return datetime.now(timezone.utc) >= expires_at
-    except (KeyError, ValueError):
-        return True  # malformed → treat as expired
-
-
 def _fresh_checkpoint(url: str, mode: str, model_key: str, fetch_mode: str = "transcript") -> dict:
     """Return a blank checkpoint dict with all fields initialized."""
     return {
@@ -132,8 +120,8 @@ def _fresh_checkpoint(url: str, mode: str, model_key: str, fetch_mode: str = "tr
         "mode": mode,
         "model_key": model_key,
         "fetch_mode": fetch_mode,
+        "video_id": "",
         "created_at": _now_iso(),
-        "expires_at": _expires_iso(),
         # Stage 0 — raw content
         "raw_content": None,
         "source": None,          # "whisper" | "transcript_api" | "news_loader"
@@ -165,43 +153,69 @@ def _fresh_checkpoint(url: str, mode: str, model_key: str, fetch_mode: str = "tr
 # Atomic I/O
 # ---------------------------------------------------------------------------
 
-def _checkpoint_path(key: str) -> Path:
-    return CACHE_DIR / f"{key}.json"
+def _sanitize_for_filename(text: str, max_chars: int = 50) -> str:
+    """Return a filesystem-safe slug from *text*."""
+    slug = re.sub(r"[^\w\s-]", "", text)
+    slug = re.sub(r"\s+", "_", slug.strip())
+    return slug[:max_chars]
 
 
-def _tmp_path(key: str) -> Path:
-    return CACHE_DIR / f"{key}.tmp"
+def _build_checkpoint_filename(key: str, data: dict) -> str:
+    """Build the human-readable filename (without directory) for a checkpoint."""
+    video_id = (data.get("video_id") or "").strip()
+    title = (data.get("video_title") or "").strip()
+    if video_id and title:
+        slug = _sanitize_for_filename(title)
+        return f"{key}_{video_id}_{slug}.json" if slug else f"{key}_{video_id}.json"
+    if video_id:
+        return f"{key}_{video_id}.json"
+    return f"{key}.json"
+
+
+def _find_checkpoint_path(key: str) -> Optional[Path]:
+    """Return the path to an existing checkpoint file for *key*, or None."""
+    if not CACHE_DIR.exists():
+        return None
+    matches = sorted(CACHE_DIR.glob(f"{key}*.json"))
+    return matches[0] if matches else None
 
 
 def save_checkpoint(key: str, data: dict) -> None:
     """Atomically persist checkpoint data to disk."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _tmp_path(key)
-    final = _checkpoint_path(key)
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, final)
-    except Exception as e:
-        print(f"[ERROR]   save_checkpoint: failed to write {final}: {e}")
-        # Best-effort cleanup of tmp file
+    target_name = _build_checkpoint_filename(key, data)
+    target_path = CACHE_DIR / target_name
+    tmp_path = CACHE_DIR / f"{key}.tmp"
+
+    # If the desired filename changed (e.g. title arrived after first save),
+    # remove the old file so we don't leave stale copies.
+    existing = _find_checkpoint_path(key)
+    if existing and existing != target_path:
         try:
-            tmp.unlink(missing_ok=True)
+            existing.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[WARNING] save_checkpoint: could not remove old file {existing.name}: {e}")
+
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, target_path)
+    except Exception as e:
+        print(f"[ERROR]   save_checkpoint: failed to write {target_path}: {e}")
+        try:
+            tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
 
 
 def load_checkpoint(key: str) -> Optional[dict]:
-    """Load a checkpoint.  Returns None if missing or expired."""
-    path = _checkpoint_path(key)
-    if not path.exists():
+    """Load a checkpoint. Returns None if not found or unreadable."""
+    path = _find_checkpoint_path(key)
+    if path is None:
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if _is_expired(data):
-            print(f"[INFO]    Checkpoint {key} has expired — ignoring")
-            return None
         return data
     except (json.JSONDecodeError, OSError) as e:
         print(f"[WARNING] Could not load checkpoint {key}: {e} — ignoring")
@@ -261,8 +275,8 @@ def get_progress_summary(data: dict) -> dict:
 # Housekeeping
 # ---------------------------------------------------------------------------
 
-def purge_expired_checkpoints() -> int:
-    """Remove expired .json checkpoints and orphaned .tmp files.
+def purge_stale_checkpoints() -> int:
+    """Remove corrupt .json checkpoints and orphaned .tmp files.
 
     Returns the number of files removed.
     """
@@ -277,11 +291,7 @@ def purge_expired_checkpoints() -> int:
             if path.suffix == ".json":
                 try:
                     with open(path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if _is_expired(data):
-                        path.unlink()
-                        print(f"[PURGE]   Removed expired checkpoint: {path.name}")
-                        removed += 1
+                        json.load(f)
                 except (json.JSONDecodeError, OSError):
                     # Corrupt file — remove it
                     path.unlink(missing_ok=True)
@@ -296,7 +306,7 @@ def purge_expired_checkpoints() -> int:
                     print(f"[PURGE]   Removed orphaned tmp file: {path.name}")
                     removed += 1
         except Exception as e:
-            print(f"[WARNING] purge_expired_checkpoints: error processing {path.name}: {e}")
+            print(f"[WARNING] purge_stale_checkpoints: error processing {path.name}: {e}")
 
     if removed:
         print(f"[PURGE]   Total files removed: {removed}")
