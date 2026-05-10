@@ -208,6 +208,7 @@ def load_content():
         _cache_hit = False
         # url is already normalised, so extract_video_id is stable here
         _video_id = extract_video_id(url) if mode == 'youtube' else None
+        checkpoint["video_id"] = _video_id or ""
         if (
             cached_audio_path
             and Path(cached_audio_path).exists()
