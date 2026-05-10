@@ -6,7 +6,6 @@ No model calls — all data comes from already-generated audio + script.
 """
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import wave
@@ -94,7 +93,6 @@ def _download_youtube_thumbnail(video_id: str, output_path: Path) -> bool:
         except Exception as exc:
             print(f"[WARNING] YouTube thumbnail download failed ({quality}): {exc}")
     return False
-
 
 def generate_srt(script: str, duration_seconds: float, output_path: Path) -> Path:
     """Generate an SRT subtitle file from *script*.
@@ -330,17 +328,24 @@ def produce_video(audio_file_basename: str, script: str, title: str, video_id: s
            "duration_seconds": float}``
     """
 
-    os.makedirs(Path(__file__).parent / "youtube_outputs", exist_ok=True)
-
-    wav_path = Path(__file__).parent / "kokoro_outputs" / audio_file_basename
+    _project_root = Path(__file__).parent
+    wav_path = _project_root / "kokoro_outputs" / audio_file_basename
     stem = Path(audio_file_basename).stem
 
     if not wav_path.exists():
         raise RuntimeError(f"Audio file not found: {wav_path}")
 
-    srt_path = Path(__file__).parent / "youtube_outputs" / f"{stem}.srt"
-    thumb_path = Path(__file__).parent / "youtube_outputs" / f"{stem}_thumb.jpg"
-    mp4_path = Path(__file__).parent / "youtube_outputs" / f"{stem}.mp4"
+    # Use a per-video subfolder when video_id is available; flat for news.
+    output_dir = (
+        _project_root / "youtube_outputs" / video_id
+        if video_id
+        else _project_root / "youtube_outputs"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    srt_path = output_dir / f"{stem}.srt"
+    thumb_path = output_dir / f"{stem}_thumb.jpg"
+    mp4_path = output_dir / f"{stem}.mp4"
 
     # Step 1: audio duration
     t0 = datetime.now()
