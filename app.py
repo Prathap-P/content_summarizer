@@ -29,7 +29,6 @@ from condensation_cache import (
     create_checkpoint,
     save_checkpoint,
     get_progress_summary,
-    purge_expired_checkpoints,
 )
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
@@ -1253,6 +1252,5 @@ def clear_audio():
     return jsonify({'success': True})
 
 if __name__ == '__main__':
-    purge_expired_checkpoints()
     purge_expired_translation_cache()
     app.run(host="0.0.0.0", port=5000)
