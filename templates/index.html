@@ -53,60 +53,7 @@
             font-size: 14px;
         }
         
-        .mode-selector {
-            background: white;
-            padding: 20px 30px;
-            border-bottom: 2px solid #f0f0f0;
-        }
-        
-        .mode-selector h3 {
-            margin-bottom: 15px;
-            color: #333;
-            font-size: 16px;
-        }
-        
-        .mode-options {
-            display: flex;
-            gap: 15px;
-        }
-        
-        .mode-option {
-            flex: 1;
-            padding: 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-align: center;
-        }
-        
-        .mode-option:hover {
-            border-color: #667eea;
-            background: #f8f9ff;
-        }
-        
-        .mode-option.active {
-            border-color: #667eea;
-            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
-        }
-        
-        .mode-option input[type="radio"] {
-            display: none;
-        }
-        
-        .mode-option label {
-            cursor: pointer;
-            font-weight: 600;
-            color: #333;
-            display: block;
-        }
-        
-        .mode-option p {
-            margin-top: 5px;
-            font-size: 12px;
-            color: #666;
-        }
-        
+
         .content {
             padding: 30px;
         }
@@ -672,6 +619,16 @@
         .finished-yt-btn:disabled {
             background: #555;
             cursor: not-allowed;
+        }
+
+        .finished-yt-btn--reupload {
+            background: #444;
+            font-size: 10px;
+            padding: 3px 6px;
+            margin-left: 4px;
+        }
+        .finished-yt-btn--reupload:hover:not(:disabled) {
+            background: #666;
         }
 
         .finished-regen-btn {
@@ -1303,23 +1260,7 @@
             <p>Analyze news articles or YouTube videos with AI</p>
         </div> -->
         
-        <!-- Mode Selector -->
-        <div class="mode-selector">
-            <h3>Select Mode:</h3>
-            <div class="mode-options">
-                <div class="mode-option" onclick="selectMode('news')">
-                    <input type="radio" id="modeNews" name="mode" value="news">
-                    <label for="modeNews">📰 News Article</label>
-                    <p>Analyze and discuss news articles</p>
-                </div>
-                <div class="mode-option active" onclick="selectMode('youtube')">
-                    <input type="radio" id="modeYoutube" name="mode" value="youtube" checked>
-                    <label for="modeYoutube">🎥 YouTube Transcript</label>
-                    <p>Condense video transcripts</p>
-                </div>
-            </div>
-        </div>
-        
+
         <div class="content">
             <!-- URL Input Section -->
             <div class="url-section">
@@ -1327,7 +1268,7 @@
                     <input 
                         type="text" 
                         id="urlInput" 
-                        placeholder="Enter news article URL (e.g., https://example.com/article)"
+                        placeholder="Enter YouTube video URL (e.g., https://youtube.com/watch?v=...)"
                     >
                     <button class="btn btn-primary" id="loadBtn" onclick="loadContent()">
                         Load Content
@@ -1470,7 +1411,7 @@
     <script>
         let selectedFiles = [];
         let isLoading = false;
-        let currentMode = 'youtube';
+
         let currentUrl = '';
         
         // Library queue state
@@ -1739,8 +1680,9 @@
             
             isProcessing = true;
             
-            // Detect mode from URL
-            const mode = url.includes('youtube.com') || url.includes('youtu.be') ? 'youtube' : 'news';
+
+            // YouTube-only mode
+            const mode = 'youtube';
             
             try {
                 const response = await fetch('/load_content', {
@@ -1942,13 +1884,13 @@
                 } else if (ytStatus === 'uploading') {
                     ytBtnHtml = `<button class="finished-yt-btn" disabled>⬆️ Uploading…</button>`;
                 } else if (ytStatus === 'private') {
-                    ytBtnHtml = `<button class="finished-yt-btn" onclick="publishNow('${ytVideoId}','${uid}','${category}')">🔒 Publish Now</button>`;
+                    ytBtnHtml = `<button class="finished-yt-btn" onclick="publishNow('${ytVideoId}','${uid}','${category}')">🔒 Publish Now</button><button class="finished-yt-btn finished-yt-btn--reupload" onclick="uploadToYoutube('${uid}','${category}')">↺ Re-upload</button>`;
                 } else if (ytStatus === 'publishing') {
                     ytBtnHtml = `<button class="finished-yt-btn" disabled>⏳ Publishing…</button>`;
                 } else if (ytStatus === 'published') {
-                    ytBtnHtml = `<span class="finished-yt-status">✅ Published</span>`;
+                    ytBtnHtml = `<span class="finished-yt-status">✅ Published</span><button class="finished-yt-btn finished-yt-btn--reupload" onclick="uploadToYoutube('${uid}','${category}')">↺ Re-upload</button>`;
                 } else if (ytStatus === 'failed') {
-                    ytBtnHtml = `<button class="finished-yt-btn" onclick="uploadToYoutube('${uid}','${category}')">❌ Retry</button>`;
+                    ytBtnHtml = `<button class="finished-yt-btn finished-yt-btn--reupload" onclick="uploadToYoutube('${uid}','${category}')">↺ Re-upload</button>`;
                 }
                 const ytErrorHtml = item.ytError ? `<div class="finished-yt-error">${htmlEscape(item.ytError)}</div>` : '';
 
@@ -2600,35 +2542,7 @@
             }
         }
         
-        function selectMode(mode) {
-            if (isLoading) return;
-            
-            currentMode = mode;
-            
-            // Update UI - find the mode option by mode value
-            document.querySelectorAll('.mode-option').forEach(option => {
-                option.classList.remove('active');
-            });
-            
-            // Add active class to the correct mode option
-            const modeId = `mode${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
-            const selectedOption = document.getElementById(modeId).closest('.mode-option');
-            if (selectedOption) {
-                selectedOption.classList.add('active');
-            }
-            
-            // Update placeholder text
-            const urlInput = document.getElementById('urlInput');
-            if (mode === 'news') {
-                urlInput.placeholder = 'Enter news article URL (e.g., https://example.com/article)';
-            } else if (mode === 'youtube') {
-                urlInput.placeholder = 'Enter YouTube video URL (e.g., https://youtube.com/watch?v=...)';
-            }
-            
-            // Check the radio button
-            document.getElementById(modeId).checked = true;
-        }
-        
+
         function showStatus(message, type = 'info') {
             const statusDiv = document.getElementById('statusMessage');
             statusDiv.className = `status status-${type}`;
@@ -2759,7 +2673,8 @@
             loadBtn.disabled = true;
             loadBtn.innerHTML = '<span class="loading"></span>';
             
-            const loadingMessage = currentMode === 'news' ? 'Loading and condensing article...' : 'Loading and condensing transcript...';
+
+            const loadingMessage = 'Loading and condensing transcript...';
             showStatus(loadingMessage, 'info');
             
             try {
@@ -2770,7 +2685,8 @@
                     },
                     body: JSON.stringify({ 
                         url,
-                        mode: currentMode,
+
+                        mode: 'youtube',
                         script_style: 'summary'
                     })
                 });
@@ -2782,7 +2698,8 @@
                     currentUrl = url;
                     
                     // Display the condensed content as assistant message with audio
-                    const contentType = currentMode === 'news' ? 'Article' : 'Transcript';
+
+                    const contentType = 'Transcript';
                     
                     // Create timing info if available
                     const timings = data.audio_time ? {
@@ -2811,7 +2728,8 @@
                         showEmailButton(data.audio_file, data.content, url);
                     }
                     
-                    const successMessage = currentMode === 'news' ? 'Article condensed! Ready for Q&A.' : 'Transcript condensed! Ready for Q&A.';
+
+                    const successMessage = 'Transcript condensed! Ready for Q&A.';
                     showStatus(successMessage, 'success');
                 } else {
                     showStatus(data.error || 'Failed to load content', 'error');
@@ -2875,7 +2793,8 @@
                     body: JSON.stringify({
                         audio_file: audioFile,
                         content: content,
-                        mode: currentMode
+
+                        mode: 'youtube'
                     })
                 });
                 
@@ -2922,7 +2841,8 @@
                     body: JSON.stringify({
                         audio_file: audioFile,
                         content: content,
-                        mode: currentMode,
+
+                        mode: 'youtube',
                         url: url
                     })
                 });
@@ -3048,7 +2968,8 @@
         
         async function analyzeContent() {
             isLoading = true;
-            showStatus(currentMode === 'news' ? 'Analyzing article...' : 'Summarizing transcript...', 'info');
+
+            showStatus('Summarizing transcript...', 'info');
             
             // Create placeholder message for streaming
             const chatContainer = document.getElementById('chatContainer');
@@ -3171,7 +3092,8 @@
                 // Restore button on error
                 if (analyzeBtn) {
                     analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = currentMode === 'news' ? '📰 Analyze Article' : '🎬 Summarize Transcript';
+
+                    analyzeBtn.textContent = '🎬 Summarize Transcript';
                 }
                 showStatus('Error analyzing content: ' + error.message, 'error');
             } finally {
