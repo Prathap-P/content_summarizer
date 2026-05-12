@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 _TOKEN_FILE = Path(__file__).parent / "token.json"
 _QUOTA_FILE = Path(__file__).parent / "youtube_quota.json"
+_UPLOADS_FILE = Path(__file__).parent / "youtube_uploads.json"
 _PT_TIMEZONE = "America/Los_Angeles"
 
 _CATEGORY_IDS: dict[str, str] = {
@@ -88,6 +89,45 @@ def _consume_quota(units: int) -> None:
     tmp.write_text(json.dumps(data, indent=2))
     os.replace(tmp, _QUOTA_FILE)
 
+def _read_uploads() -> list[dict]:
+    """Read uploads registry, creating it with [] if missing."""
+    if not _UPLOADS_FILE.exists():
+        tmp = _UPLOADS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps([], indent=2))
+        os.replace(tmp, _UPLOADS_FILE)
+        return []
+    return json.loads(_UPLOADS_FILE.read_text())
+
+def register_upload(record: dict) -> None:
+    """Append record to the uploads registry atomically."""
+    uploads = _read_uploads()
+    uploads.append(record)
+    tmp = _UPLOADS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(uploads, indent=2))
+    os.replace(tmp, _UPLOADS_FILE)
+    print(
+        f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] "
+        f"Registered upload: yt_video_id={record.get('yt_video_id')} title={record.get('title')}"
+    )
+
+def mark_published(yt_video_id: str) -> None:
+    """Mark a registry entry as published by yt_video_id."""
+    uploads = _read_uploads()
+    for entry in uploads:
+        if entry.get("yt_video_id") == yt_video_id:
+            entry["published"] = True
+            entry["published_at"] = datetime.now(timezone.utc).isoformat()
+            tmp = _UPLOADS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(uploads, indent=2))
+            os.replace(tmp, _UPLOADS_FILE)
+            return
+    print(f"[WARNING] mark_published: yt_video_id={yt_video_id} not found in registry")
+
+def list_uploads() -> list[dict]:
+    """Return all upload registry entries sorted by uploaded_at descending (newest first)."""
+    uploads = _read_uploads()
+    return sorted(uploads, key=lambda e: e.get("uploaded_at", ""), reverse=True)
+
 def upload_video(
     mp4_path: "str | Path",
     title: str,
@@ -98,11 +138,13 @@ def upload_video(
 ) -> str:
     """Upload a video to YouTube (private), set thumbnail and captions, return video ID.
 
-    Consumes ~1700 quota units. Raises RuntimeError if quota would be exceeded.
+    Consumes ~1650 quota units total (1600 upload + 50 thumbnail). Caption upload is
+    disabled to save quota — uncomment the captions block below to re-enable (+400 units).
+    Raises RuntimeError if quota would be exceeded.
     """
     from googleapiclient.http import MediaFileUpload
 
-    _check_quota(1700)
+    _check_quota(1650)
 
     service = _get_youtube_service()
     mp4_path = Path(mp4_path)
@@ -137,34 +179,36 @@ def upload_video(
     yt_video_id: str = response["id"]
     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Upload complete — video ID: {yt_video_id}")
 
-    # Consume quota immediately after upload succeeds (before optional steps that may fail)
-    _consume_quota(1700)
+    # Consume upload quota immediately after upload succeeds (before optional steps that may fail)
+    _consume_quota(1600)
 
-    # Set thumbnail
+    # Set thumbnail (costs 50 quota units)
     try:
         thumb_media = MediaFileUpload(str(thumb_path), mimetype="image/jpeg", resumable=False)
         service.thumbnails().set(videoId=yt_video_id, media_body=thumb_media).execute()
+        _consume_quota(50)
         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Thumbnail set for {yt_video_id}")
     except Exception as exc:
         print(f"[WARNING] Thumbnail upload failed for {yt_video_id}: {exc} — continuing")
 
-    # Upload captions
-    try:
-        caption_body = {
-            "snippet": {
-                "videoId": yt_video_id,
-                "language": "en",
-                "name": title[:150],
-                "isDraft": False,
-            }
-        }
-        caption_media = MediaFileUpload(str(srt_path), mimetype="application/octet-stream", resumable=False)
-        service.captions().insert(
-            part="snippet", body=caption_body, media_body=caption_media
-        ).execute()
-        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Captions uploaded for {yt_video_id}")
-    except Exception as exc:
-        print(f"[WARNING] Caption upload failed for {yt_video_id}: {exc} — continuing")
+    # Upload captions (costs 400 quota units) — disabled to save quota; uncomment to re-enable
+    # try:
+    #     caption_body = {
+    #         "snippet": {
+    #             "videoId": yt_video_id,
+    #             "language": "en",
+    #             "name": title[:150],
+    #             "isDraft": False,
+    #         }
+    #     }
+    #     caption_media = MediaFileUpload(str(srt_path), mimetype="application/octet-stream", resumable=False)
+    #     service.captions().insert(
+    #         part="snippet", body=caption_body, media_body=caption_media
+    #     ).execute()
+    #     _consume_quota(400)
+    #     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Captions uploaded for {yt_video_id}")
+    # except Exception as exc:
+    #     print(f"[WARNING] Caption upload failed for {yt_video_id}: {exc} — continuing")
 
     return yt_video_id
 
