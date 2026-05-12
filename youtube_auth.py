@@ -19,6 +19,7 @@ load_dotenv()
 SCOPES: list[str] = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl",  # required for caption upload
 ]
 
 _PROJECT_ROOT = Path(__file__).parent
