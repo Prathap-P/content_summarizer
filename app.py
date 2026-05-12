@@ -1,6 +1,6 @@
 import json
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, render_template, request, jsonify, send_file, stream_with_context, Response
 import os
@@ -18,10 +18,9 @@ import time
 from dotenv import load_dotenv
 load_dotenv()
 
-from main import read_website_content
 from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id, purge_expired_translation_cache
 from audio_config import ASR_BACKEND, TTS_BACKEND
-from system_prompts import news_explainer_system_message, subject_matter_expert_prompt, map_reduce_custom_prompts
+from system_prompts import subject_matter_expert_prompt, map_reduce_custom_prompts
 from condenser_service import condense_content
 from condensation_cache import (
     compute_cache_key,
@@ -54,48 +53,18 @@ current_model = get_model(current_model_key)
 
 def check_llm_server():
     """Check if the local LLM server is running"""
+    _base = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
     try:
-        response = requests.get("http://localhost:8080/v1/models", timeout=2)
+        response = requests.get(f"{_base}/models", timeout=2)
         return response.status_code == 200
     except:
         return False
 
-def create_conversation_chain(mode):
-    """Create a conversation chain with mode-specific system prompt"""
-    if mode == "news":
-        system_message = news_explainer_system_message
-    elif mode == "youtube":
-        system_message = subject_matter_expert_prompt
-    else:
-        raise ValueError(f"Invalid mode: {mode}")
-
-    prompt_template = PromptTemplate(
-        input_variables=["history", "input"],
-        template=f"""
-        {system_message}
-        Conversation History:
-        {{history}}
-        User Question:
-        {{input}}
-        """
-    )
-
-    return ConversationChain(
-        llm=current_model,
-        memory=window_memory_100,
-        prompt=prompt_template,
-        verbose=False
-    )
-
-def create_runnable_chain(mode):
+def create_runnable_chain():
     """Create a runnable chain with mode-specific system prompt"""
-    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Creating runnable chain for mode: {mode}")
-    if mode == "news":
-        system_message = news_explainer_system_message
-    elif mode == "youtube":
-        system_message = subject_matter_expert_prompt
-    else:
-        raise ValueError(f"Invalid mode: {mode}")
+
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Creating runnable chain for YouTube mode")
+    system_message = subject_matter_expert_prompt
 
     chat_prompt_template = ChatPromptTemplate.from_messages([
         ("system", system_message),
@@ -135,7 +104,8 @@ def load_content():
 
     data = request.json
     url = data.get('url')
-    mode = data.get('mode', 'news')  # 'news' or 'youtube'
+
+    mode = data.get('mode', 'youtube')
     auto_send_telegram = data.get('auto_send_telegram', False)  # Only true for auto-processor
     category = data.get('category', 'tech')  # 'tech', 'social', or 'science'
     fetch_mode = data.get('fetch_mode', 'transcript')  # 'transcript' or 'audio'
@@ -143,8 +113,8 @@ def load_content():
     if not url:
         return jsonify({'error': 'URL is required'}), 400
 
-    if mode not in ['news', 'youtube']:
-        return jsonify({'error': 'Invalid mode. Use "news" or "youtube"'}), 400
+    if mode != 'youtube':
+        return jsonify({'error': 'Invalid mode. Only "youtube" is supported.', 'success': False}), 400
 
     if fetch_mode not in ['transcript', 'audio']:
         print(f"[WARNING] Invalid fetch_mode '{fetch_mode}', defaulting to 'transcript'")
@@ -154,13 +124,6 @@ def load_content():
     if script_style not in ['summary', 'analysis']:
         print(f"[WARNING] Invalid script_style '{script_style}', defaulting to 'summary'")
         script_style = 'summary'
-
-    # Audio queue only makes sense for YouTube — reject non-YouTube URLs early
-    if fetch_mode == 'audio' and mode != 'youtube':
-        return jsonify({
-            'error': 'Audio queue only supports YouTube URLs. Use the Transcript queue for news articles.',
-            'success': False
-        }), 400
 
     if category not in ['tech', 'social', 'science']:
         print(f"[WARNING] Invalid category '{category}', defaulting to 'tech'")
@@ -172,12 +135,12 @@ def load_content():
     # This guarantees a single canonical form is used for the cache key,
     # the stored checkpoint, yt-dlp, and the transcript API.
     # ------------------------------------------------------------------
-    if mode == 'youtube':
-        _vid = extract_video_id(url)
-        if not _vid:
-            return jsonify({'error': 'Invalid YouTube URL format.', 'success': False}), 400
-        url = f"https://www.youtube.com/watch?v={_vid}"
-        print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Normalised YouTube URL → {url}")
+
+    _vid = extract_video_id(url)
+    if not _vid:
+        return jsonify({'error': 'Invalid YouTube URL format.', 'success': False}), 400
+    url = f"https://www.youtube.com/watch?v={_vid}"
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Normalised YouTube URL → {url}")
 
     # ------------------------------------------------------------------
     # Checkpoint setup — compute key before any I/O so every stage can
@@ -198,7 +161,7 @@ def load_content():
     try:
         tts_input = ''  # declared early; set in both cache-hit and non-cache branches
         # Initialize conversation chain for the selected mode
-        conversation_chain = create_runnable_chain(mode)
+        conversation_chain = create_runnable_chain()
         current_mode = mode
 
         # --------------------------------------------------------------
@@ -207,7 +170,8 @@ def load_content():
         cached_audio_path = checkpoint.get("audio_file_path")
         _cache_hit = False
         # url is already normalised, so extract_video_id is stable here
-        _video_id = extract_video_id(url) if mode == 'youtube' else None
+
+        _video_id = extract_video_id(url)
         checkpoint["video_id"] = _video_id or ""
         if (
             cached_audio_path
@@ -237,19 +201,7 @@ def load_content():
                     f"Resuming: raw_content already cached ({len(raw_content)} chars), "
                     f"source={checkpoint.get('source')}"
                 )
-            elif mode == 'news':
-                print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Loading news article from: {url}")
-                documents = read_website_content(url)
-                if not documents:
-                    print(f"[ERROR] Failed to load article from: {url}")
-                    return jsonify({'error': 'Could not load article from URL'}), 400
-                raw_content = documents[0].page_content
-                checkpoint["raw_content"] = raw_content
-                checkpoint["source"] = "news_loader"
-                save_checkpoint(checkpoint_key, checkpoint)
-                print(f"[SUCCESS] Article loaded: {len(raw_content)} chars")
-
-            elif mode == 'youtube':
+            else:
                 # url is already normalised to watch?v=ID — extract_video_id always succeeds here
                 video_id = extract_video_id(url)
 
@@ -370,7 +322,7 @@ def load_content():
             try:
 
                 _yt_title = checkpoint.get("video_title", "") if checkpoint else ""
-                if not _yt_title and mode == 'youtube' and _video_id:
+                if not _yt_title and _video_id:
                     _yt_title = _fetch_youtube_title(_video_id)
                     if _yt_title and checkpoint:
                         checkpoint["video_title"] = _yt_title
@@ -433,7 +385,7 @@ def load_content():
                     print(f"[ERROR] {error_msg}")
                     return jsonify({'error': error_msg, 'success': False}), 422
                 
-                content_type = 'Article' if mode == 'news' else 'YouTube Video'
+                content_type = 'YouTube Video'
                 message = f"📝 Condensed {content_type}\n\n{condensed_content}"
                 
                 print(f"[TELEGRAM] Sending to channel: {channel_id}, discussion group: {chat_id}")
@@ -473,7 +425,7 @@ def load_content():
         
         # Step 5: Store condensed content in conversation memory for future Q&A
         # The memory now contains: system prompt (from create_runnable_chain) + condensed input
-        session_history.add_user_message(f"Here is the condensed {'article' if mode == 'news' else 'video transcript'} content (Original: {raw_word_count} words, Condensed: {condensed_word_count} words):\n\n{condensed_content}")
+        session_history.add_user_message(f"Here is the condensed video transcript content (Original: {raw_word_count} words, Condensed: {condensed_word_count} words):\n\n{condensed_content}")
         session_history.add_ai_message(f"I have received and processed the condensed content. I'm ready to answer your questions about it.")
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensed content added to memory. Ready for Q&A.")
 
@@ -512,9 +464,9 @@ def load_content():
 def send_email():
     """Send condensed content with audio via email"""
     data = request.json
+
     audio_file = data.get('audio_file')
     content = data.get('content')
-    mode = data.get('mode', 'news')
     url = data.get('url', '')
     
     # Get recipient email from environment variable
@@ -535,7 +487,7 @@ def send_email():
             return jsonify({'error': 'Audio file does not exist', 'success': False}), 404
         
         # Create email subject and body
-        content_type = 'Article' if mode == 'news' else 'Video Transcript'
+        content_type = 'Video Transcript'
         subject = f'Condensed {content_type} with Audio'
         
         # Truncate content if too long for email body
@@ -568,9 +520,9 @@ def send_email():
 def send_telegram():
     """Send condensed content with audio via Telegram"""
     data = request.json
+
     audio_file = data.get('audio_file')
     content = data.get('content')
-    mode = data.get('mode', 'news')
     url = data.get('url', '')
     
     # Get Telegram credentials from environment variables
@@ -597,7 +549,7 @@ def send_telegram():
             return jsonify({'error': 'Audio file does not exist', 'success': False}), 404
         
         # Create message text
-        content_type = 'Article' if mode == 'news' else 'Video Transcript'
+        content_type = 'Video Transcript'
         
         # Don't include URL in message since it will be sent separately
         message = f"📝 Condensed {content_type}\n\n{content}"
@@ -991,7 +943,7 @@ def stream_chat():
     if not check_llm_server():
         print("[ERROR] LLM server not accessible")
         return jsonify({
-            'error': 'Local LLM server is not running. Please start LM Studio and load a model at http://localhost:8080'
+            'error': f'Local LLM server is not running. Please start LM Studio and load a model at {os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")}'
         }), 503
 
     data = request.json
@@ -1188,7 +1140,8 @@ def produce_video_route():
             category = 'tech'
 
         from video_producer import produce_video
-        from youtube_uploader import upload_video
+
+        from youtube_uploader import upload_video, register_upload
 
         # Extract YouTube video_id so produce_video can download the original thumbnail
         video_id = extract_video_id(url) if url else ""
@@ -1206,6 +1159,23 @@ def produce_video_route():
 
         if not yt_video_id:
             return jsonify({'success': False, 'error': 'upload_video returned no video ID'}), 500
+
+        try:
+            register_upload({
+                "yt_video_id": yt_video_id,
+                "source_video_id": video_id or "",
+                "url": url or "",
+                "title": title or "Untitled",
+                "category": category,
+                "mp4_path": result['mp4_path'],
+                "thumb_path": result['thumb_path'],
+                "srt_path": result['srt_path'],
+                "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                "published": False,
+                "published_at": None,
+            })
+        except Exception as reg_err:
+            print(f"[WARNING] register_upload failed (non-fatal): {reg_err}")
 
         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Video produced and uploaded: {yt_video_id}")
         return jsonify({
@@ -1229,13 +1199,29 @@ def publish_youtube_route():
         if not yt_video_id:
             return jsonify({'success': False, 'error': 'yt_video_id is required'}), 400
 
-        from youtube_uploader import check_and_publish
+        from youtube_uploader import check_and_publish, mark_published
         result = check_and_publish(yt_video_id)
+
+        if result.get("published"):
+            try:
+                mark_published(yt_video_id)
+            except Exception as mp_err:
+                print(f"[WARNING] mark_published failed (non-fatal): {mp_err}")
 
         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Manual publish result for {yt_video_id}: {result}")
         return jsonify({'success': True, 'result': result})
     except Exception as e:
         print(f"[ERROR]   /publish_youtube failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/youtube_uploads', methods=['GET'])
+def youtube_uploads_route():
+    try:
+        from youtube_uploader import list_uploads
+        uploads = list_uploads()
+        return jsonify({'success': True, 'uploads': uploads})
+    except Exception as e:
+        print(f"[ERROR]   /youtube_uploads failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/clear_audio', methods=['POST'])
