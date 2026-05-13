@@ -1,4 +1,8 @@
 import os
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 import copy
 import threading
 import time
