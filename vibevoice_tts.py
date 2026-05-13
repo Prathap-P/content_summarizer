@@ -20,15 +20,26 @@ load_dotenv()
 VIBEVOICE_MODEL_PATH = os.getenv("VIBEVOICE_MODEL_PATH", "./models/VibeVoice-Realtime-0.5B")
 VIBEVOICE_VOICES_DIR = os.getenv("VIBEVOICE_VOICES_DIR", "./VibeVoice/demo/voices/streaming_model")
 VIBEVOICE_VOICE = os.getenv("VIBEVOICE_VOICE", "en-Davis_man")
+
 def _parse_ddpm_steps() -> int:
-    raw = os.getenv("VIBEVOICE_DDPM_STEPS", "30")
+    raw = os.getenv("VIBEVOICE_DDPM_STEPS", "20")
     try:
         return max(1, int(float(raw)))
     except ValueError:
-        print(f"[WARNING] VIBEVOICE_DDPM_STEPS='{raw}' is not a valid integer — falling back to 30")
-        return 30
+        print(f"[WARNING] VIBEVOICE_DDPM_STEPS='{raw}' is not a valid integer — falling back to 20")
+        return 20
 
 VIBEVOICE_DDPM_STEPS: int = _parse_ddpm_steps()
+
+def _parse_chunk_size() -> int:
+    raw = os.getenv("VIBEVOICE_CHUNK_SIZE", "3000")
+    try:
+        return max(100, int(float(raw)))
+    except ValueError:
+        print(f"[WARNING] VIBEVOICE_CHUNK_SIZE='{raw}' is not a valid integer — falling back to 3000")
+        return 3000
+
+VIBEVOICE_CHUNK_SIZE: int = _parse_chunk_size()
 
 class VibeVoiceTTS:
     """
@@ -45,7 +56,8 @@ class VibeVoiceTTS:
     """
 
     SAMPLE_RATE = 24_000
-    CHUNK_SIZE  = 1000
+
+    CHUNK_SIZE  = VIBEVOICE_CHUNK_SIZE
     CFG_SCALE   = 1.5
 
     KOKORO_VOICE_MAP = {
