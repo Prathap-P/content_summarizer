@@ -168,9 +168,13 @@ class VibeVoiceTTS:
         text = self._normalise_text(text)
 
         chunks = self._chunk_text(text)
+        n_chunks = len(chunks)
         all_audio = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, 1):
+            t_chunk = time.perf_counter()
             audio, _ = self._synthesize_one(chunk, prefilled)
+            elapsed = time.perf_counter() - t_chunk
+            print(f"[DEBUG]   [{datetime.now().strftime('%H:%M:%S')}] [VIBEVOICE_TTS] Chunk {i}/{n_chunks} ({len(chunk)} chars) — {elapsed:.1f}s")
             all_audio.append(audio)
 
         final = np.concatenate(all_audio) if all_audio else np.array([], dtype=np.float32)
@@ -351,7 +355,6 @@ def generate_audio(text: str, voice: str = "") -> tuple[np.ndarray, int]:
     audio, sample_rate = _tts.generate(text, voice=resolved_voice)
     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] [VIBEVOICE_TTS] Audio generated: {len(audio)/sample_rate:.2f}s at {sample_rate}Hz")
     return audio, sample_rate
-
 
 def list_voices(voices_dir: str = "") -> list[str]:
     """Return names of all available VibeVoice preset voices.
