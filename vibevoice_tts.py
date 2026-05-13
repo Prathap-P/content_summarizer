@@ -117,6 +117,12 @@ class VibeVoiceTTS:
             self.model.to("mps")
 
         self.model.eval()
+
+        try:
+            self.model = torch.compile(self.model, backend="aot_eager", dynamic=True)
+            print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] [VIBEVOICE_TTS] torch.compile applied (backend=aot_eager, dynamic=True)")
+        except Exception as e:
+            print(f"[WARNING] [{datetime.now().strftime('%H:%M:%S')}] [VIBEVOICE_TTS] torch.compile skipped: {e}")
         try:
             self.model.model.noise_scheduler = self.model.model.noise_scheduler.from_config(
                 self.model.model.noise_scheduler.config,
